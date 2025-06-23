@@ -8,26 +8,34 @@ const router = express.Router();
 // Apply logging middleware to all routes
 router.use(logRequest);
 
-// Generate Manim animation
+// Generate Manim animation with session support
 router.post('/generate', validatePrompt, async (req, res) => {
     const agent = new ManimAgent();
     
     try {
-        const { prompt } = req.body;
+        const { prompt, sessionId = 'default', userPreferences = {} } = req.body;
 
-        console.log('Generating Manim code for prompt:', prompt);
+        console.log(`Generating Manim code for session ${sessionId}, prompt:`, prompt);
 
-        // Generate Manim code with error handling and automatic fixes
-        const generationResult = await agent.generateAndFixManimCode(prompt, 3);
+        // Set user preferences if provided
+        if (Object.keys(userPreferences).length > 0) {
+            Object.entries(userPreferences).forEach(([key, value]) => {
+                agent.setUserPreference(sessionId, key, value);
+            });
+        }
+
+        // Generate Manim code with session context and error handling
+        const generationResult = await agent.generateAndFixManimCode(prompt, sessionId, 3);
         
         console.log('Generated code result:', {
             success: generationResult.success,
             attempts: generationResult.attempts,
-            wasFixed: generationResult.wasFixed
+            wasFixed: generationResult.wasFixed,
+            sessionId: generationResult.sessionId
         });
 
-        // Render animation with error handling
-        const renderResult = await agent.renderAnimationWithErrorHandling(generationResult.code, 3);
+        // Render animation with session context and error handling
+        const renderResult = await agent.renderAnimationWithErrorHandling(generationResult.code, sessionId, 3);
 
         console.log('Animation rendered successfully:', renderResult.videoPath);
 
@@ -37,6 +45,8 @@ router.post('/generate', validatePrompt, async (req, res) => {
             videoPath: renderResult.videoPath,
             videoFileName: renderResult.videoFileName,
             message: 'Animation generated successfully',
+            sessionId: sessionId,
+            sessionInfo: agent.getSessionInfo(sessionId),
             metadata: {
                 generationAttempts: generationResult.attempts,
                 wasCodeFixed: generationResult.wasFixed || renderResult.wasCodeFixed,
@@ -108,17 +118,17 @@ router.post('/validate', validateCode, async (req, res) => {
     }
 });
 
-// Render existing Manim code
+// Render existing Manim code with session support
 router.post('/render', validateCode, async (req, res) => {
     const agent = new ManimAgent();
     
     try {
-        const { code } = req.body;
+        const { code, sessionId = 'default' } = req.body;
 
-        console.log('Rendering provided Manim code');
+        console.log(`Rendering provided Manim code for session ${sessionId}`);
 
-        // Render animation with error handling and automatic fixes
-        const renderResult = await agent.renderAnimationWithErrorHandling(code, 3);
+        // Render animation with session context and error handling
+        const renderResult = await agent.renderAnimationWithErrorHandling(code, sessionId, 3);
 
         console.log('Custom animation rendered successfully:', renderResult.videoPath);
 
@@ -128,6 +138,8 @@ router.post('/render', validateCode, async (req, res) => {
             videoFileName: renderResult.videoFileName,
             message: 'Animation rendered successfully',
             code: renderResult.code, // Return the potentially fixed code
+            sessionId: sessionId,
+            sessionInfo: agent.getSessionInfo(sessionId),
             metadata: {
                 wasCodeFixed: renderResult.wasCodeFixed || false,
                 wasImproved: renderResult.wasImproved || false,
@@ -137,6 +149,127 @@ router.post('/render', validateCode, async (req, res) => {
 
     } catch (error) {
         console.error('Error rendering animation:', error);
+        
+        return res.status(500).json({
+            error: error.message,
+            success: false
+        });
+    }
+});
+
+// Session management routes
+
+// Get session information
+router.get('/session/:sessionId?', async (req, res) => {
+    try {
+        const agent = new ManimAgent();
+        const sessionId = req.params.sessionId || 'default';
+        
+        const sessionInfo = agent.getSessionInfo(sessionId);
+        
+        return res.json({
+            success: true,
+            sessionId: sessionId,
+            sessionInfo: sessionInfo,
+            activeSessions: agent.getActiveSessions()
+        });
+    } catch (error) {
+        console.error('Error getting session info:', error);
+        
+        return res.status(500).json({
+            error: error.message,
+            success: false
+        });
+    }
+});
+
+// Clear a specific session
+router.delete('/session/:sessionId', async (req, res) => {
+    try {
+        const agent = new ManimAgent();
+        const sessionId = req.params.sessionId;
+        
+        const cleared = agent.clearSession(sessionId);
+        
+        return res.json({
+            success: true,
+            cleared: cleared,
+            message: cleared ? `Session ${sessionId} cleared` : `Session ${sessionId} not found`,
+            activeSessions: agent.getActiveSessions()
+        });
+    } catch (error) {
+        console.error('Error clearing session:', error);
+        
+        return res.status(500).json({
+            error: error.message,
+            success: false
+        });
+    }
+});
+
+// Set user preferences for a session
+router.post('/session/:sessionId/preferences', async (req, res) => {
+    try {
+        const agent = new ManimAgent();
+        const sessionId = req.params.sessionId;
+        const { preferences } = req.body;
+        
+        if (!preferences || typeof preferences !== 'object') {
+            return res.status(400).json({
+                error: 'Preferences object is required',
+                success: false
+            });
+        }
+        
+        Object.entries(preferences).forEach(([key, value]) => {
+            agent.setUserPreference(sessionId, key, value);
+        });
+        
+        return res.json({
+            success: true,
+            sessionId: sessionId,
+            preferences: preferences,
+            sessionInfo: agent.getSessionInfo(sessionId),
+            message: 'Preferences updated successfully'
+        });
+    } catch (error) {
+        console.error('Error setting preferences:', error);
+        
+        return res.status(500).json({
+            error: error.message,
+            success: false
+        });
+    }
+});
+
+// Improve existing code with session context
+router.post('/improve', validateCode, async (req, res) => {
+    try {
+        const agent = new ManimAgent();
+        const { code, feedback, sessionId = 'default' } = req.body;
+        
+        if (!feedback || typeof feedback !== 'string') {
+            return res.status(400).json({
+                error: 'Feedback string is required',
+                success: false
+            });
+        }
+        
+        console.log(`Improving code for session ${sessionId} with feedback:`, feedback);
+        
+        const improvedCode = await agent.improveManimCode(code, feedback, sessionId);
+        
+        return res.json({
+            success: true,
+            code: improvedCode,
+            originalCode: code,
+            feedback: feedback,
+            sessionId: sessionId,
+            sessionInfo: agent.getSessionInfo(sessionId),
+            message: 'Code improved successfully'
+        });
+    } catch (error) {
+        console.error('Error improving code:', error);
         
         return res.status(500).json({
             error: error.message,
