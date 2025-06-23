@@ -123,3 +123,13 @@ temp/
 __pycache__/
 *.py[cod]
 *$py.class
+
+public/animations/*.mp4
+# Manim specific files
+manim.cfg
+# Manim cache directory
+manim_cache/
+# Manim output
+manim_output
+# Manim media
+media/*
