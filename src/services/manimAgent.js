@@ -12,21 +12,40 @@ IMPORTANT RULES:
 1. Always respond with ONLY Python Manim code - no explanations, no markdown formatting
 2. Use proper Manim syntax with the latest version conventions
 3. Create a class that inherits from Scene
-4. Include proper imports at the top
+4. Include proper imports at the top: "from manim import *"
 5. The main animation method should be called 'construct'
 6. Generate complete, runnable code that creates engaging visual animations
 7. Focus on mathematical concepts, educational content, or visual demonstrations
 8. Use appropriate Manim objects like Text, MathTex, Circle, Square, Arrow, etc.
+
+CRITICAL SYNTAX RULES:
+- Use self.play() for animations, self.wait() for pauses
+- Never put self.wait() inside self.play()
+- Always separate animation and wait commands
+- Use proper animation constructors: Create(), Write(), FadeIn(), FadeOut(), Transform()
+- For rotations use: Rotate(object, angle=PI/2, about_point=ORIGIN)
+- For movements use: object.animate.shift(direction)
+- For parameters in self.play(), ONLY use: run_time=1.5 (NO rate_func parameter!)
+- DO NOT use any rate_func parameter - it causes errors
+- Keep animations simple and working
+
+FORBIDDEN:
+- rate_func=anything (causes AttributeError)
+- rate_functions.anything (causes AttributeError)
+- Any ease_in, ease_out, smooth functions (not available)
 
 Example structure:
 from manim import *
 
 class MyAnimation(Scene):
     def construct(self):
-        # Your animation code here
-        pass
+        circle = Circle()
+        self.play(Create(circle))
+        self.wait(1)
+        self.play(circle.animate.shift(UP), run_time=2)
+        self.wait(1)
 
-Remember: Output ONLY the Python code, nothing else.`;
+Remember: NO rate_func parameter, keep it simple and working!`;
 
 const MANIM_ERROR_FIX_PROMPT = `You are a specialized AI assistant that fixes Python Manim code compilation errors.
 
@@ -73,27 +92,27 @@ class ManimAgent {
         if (!process.env.GEMINI_API_KEY) {
             throw new Error('GEMINI_API_KEY environment variable is required');
         }
-        
+
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-        
+
         // Model for single-shot generation (without system instruction to avoid API conflicts)
-        this.model = genAI.getGenerativeModel({ 
+        this.model = genAI.getGenerativeModel({
             model: "gemini-2.5-flash",
             generationConfig: {
                 maxOutputTokens: 4096,
                 temperature: 0.7,
             },
         });
-        
+
         // Model for chat sessions
-        this.chatModel = genAI.getGenerativeModel({ 
+        this.chatModel = genAI.getGenerativeModel({
             model: "gemini-2.5-flash",
             generationConfig: {
                 maxOutputTokens: 4096,
                 temperature: 0.7,
             },
         });
-        
+
         // Store conversation sessions for multi-turn interactions
         this.conversationSessions = new Map();
         this.sessionTimeout = 30 * 60 * 1000; // 30 minutes
@@ -103,7 +122,7 @@ class ManimAgent {
     getOrCreateSession(sessionId = 'default') {
         // Clean up expired sessions
         this.cleanupExpiredSessions();
-          if (!this.conversationSessions.has(sessionId)) {
+        if (!this.conversationSessions.has(sessionId)) {
             const session = this.chatModel.startChat({
                 history: [
                     {
@@ -111,7 +130,7 @@ class ManimAgent {
                         parts: [{ text: "Please act as a specialized AI assistant that generates Python Manim code. Always respond with ONLY Python Manim code - no explanations, no markdown formatting. Use proper Manim syntax and create classes that inherit from Scene with a construct method." }]
                     },
                     {
-                        role: "model", 
+                        role: "model",
                         parts: [{ text: "I understand. I will generate only clean Python Manim code without any explanations or formatting. I'll create proper Scene classes with construct methods using current Manim syntax." }]
                     }
                 ],
@@ -120,7 +139,7 @@ class ManimAgent {
                     temperature: 0.7,
                 },
             });
-            
+
             this.conversationSessions.set(sessionId, {
                 chat: session,
                 lastActivity: Date.now(),
@@ -131,13 +150,13 @@ class ManimAgent {
                     conversationHistory: []
                 }
             });
-            
+
             console.log(`Created new conversation session: ${sessionId}`);
         } else {
             // Update last activity
             this.conversationSessions.get(sessionId).lastActivity = Date.now();
         }
-        
+
         return this.conversationSessions.get(sessionId);
     }
 
@@ -159,7 +178,7 @@ class ManimAgent {
      */
     addSessionContext(sessionId, type, data) {
         const session = this.getOrCreateSession(sessionId);
-        
+
         switch (type) {
             case 'code':
                 session.context.previousCodes.push({
@@ -173,7 +192,7 @@ class ManimAgent {
                     session.context.previousCodes.shift();
                 }
                 break;
-                
+
             case 'error':
                 session.context.previousErrors.push({
                     error: data.error,
@@ -185,11 +204,11 @@ class ManimAgent {
                     session.context.previousErrors.shift();
                 }
                 break;
-                
+
             case 'preference':
                 session.context.userPreferences[data.key] = data.value;
                 break;
-                
+
             case 'conversation':
                 session.context.conversationHistory.push({
                     type: data.type, // 'user' or 'assistant'
@@ -208,27 +227,45 @@ class ManimAgent {
     buildContextualPrompt(userPrompt, sessionId, isRetry = false) {
         const session = this.getOrCreateSession(sessionId);
         const context = session.context;
-        
+
         // Start with system prompt for session-based requests
-        let contextualPrompt = `${MANIM_SYSTEM_PROMPT}\n\nUser Request: ${userPrompt}`;
-        
+        let contextualPrompt = `${MANIM_SYSTEM_PROMPT}\n\nUser Request: ${userPrompt}`;        // Add uniqueness requirement to avoid repetition
+        const uniqueId = Math.random().toString(36).substring(2, 8);
+        const timestamp = Date.now();
+        contextualPrompt += `\n\nIMPORTANT: Create a UNIQUE animation (ID: ${uniqueId}, Time: ${timestamp}) that is completely different from any previous animations. Use different objects, colors, movements, and visual elements.`;
+
+        // Add specific variety requirements
+        const varietyElements = [
+            'shapes: Circle, Square, Triangle, Polygon, Star, Ellipse',
+            'colors: RED, BLUE, GREEN, YELLOW, PURPLE, ORANGE, PINK, CYAN',
+            'movements: shift, rotate, scale, transform, FadeIn, FadeOut, Write, Create',
+            'concepts: algebra, geometry, calculus, physics, chemistry, statistics'
+        ];
+
+        const varietyList = varietyElements.map(e => `- ${e}`).join('\n');
+        contextualPrompt += `\n\nVariety options to choose from:\n${varietyList}`;
+        contextualPrompt += `\n\nSelect different combinations from above to ensure uniqueness.`;
+
         // Add conversation context if available
         if (context.conversationHistory.length > 0) {
             contextualPrompt += '\n\nPrevious Conversation Context:';
-            context.conversationHistory.slice(-3).forEach(entry => {
-                contextualPrompt += `\n${entry.type}: ${entry.content.substring(0, 200)}${entry.content.length > 200 ? '...' : ''}`;
+            context.conversationHistory.slice(-2).forEach(entry => {
+                contextualPrompt += `\n${entry.type}: ${entry.content.substring(0, 150)}${entry.content.length > 150 ? '...' : ''}`;
             });
         }
-        
-        // Add previous successful codes as reference
+
+        // Add previous successful codes as reference (but emphasize being different)
         if (context.previousCodes.length > 0 && !isRetry) {
             const successfulCodes = context.previousCodes.filter(c => c.success);
             if (successfulCodes.length > 0) {
-                const lastSuccessful = successfulCodes[successfulCodes.length - 1];
-                contextualPrompt += `\n\nPrevious successful code for reference:\n${lastSuccessful.code.substring(0, 500)}${lastSuccessful.code.length > 500 ? '...' : ''}`;
+                contextualPrompt += `\n\nPrevious animations created (CREATE SOMETHING DIFFERENT):`;
+                successfulCodes.slice(-2).forEach((codeInfo, index) => {
+                    contextualPrompt += `\n${index + 1}. Previous code used: ${codeInfo.code.substring(0, 200)}...`;
+                });
+                contextualPrompt += `\n\nMAKE SURE to use DIFFERENT objects, colors, animations, and concepts from the above.`;
             }
         }
-        
+
         // Add error context if this is a retry
         if (isRetry && context.previousErrors.length > 0) {
             const recentErrors = context.previousErrors.slice(-2);
@@ -237,7 +274,7 @@ class ManimAgent {
                 contextualPrompt += `\n- Error: ${errorInfo.error}`;
             });
         }
-        
+
         // Add user preferences
         if (Object.keys(context.userPreferences).length > 0) {
             contextualPrompt += '\n\nUser Preferences:';
@@ -245,56 +282,48 @@ class ManimAgent {
                 contextualPrompt += `\n- ${key}: ${value}`;
             });
         }
-        
+
+        // Add variety suggestions
+        contextualPrompt += `\n\nSuggestions for variety: Try different shapes (Circle, Square, Triangle, Star), colors (RED, BLUE, GREEN, YELLOW, PURPLE), movements (shift, rotate, scale, transform), or mathematical concepts (functions, geometry, algebra).`;
+
         return contextualPrompt;
-    }async generateManimCode(userPrompt, sessionId = 'default') {
+    } async generateManimCode(userPrompt, sessionId = 'default') {
         try {
-            if (sessionId === 'default' && this.conversationSessions.size === 0) {
-                // For first-time use or when no sessions exist, use the single-shot model
-                console.log('Using single-shot generation for initial request');
-                const fullPrompt = `${MANIM_SYSTEM_PROMPT}\n\nUser Request: ${userPrompt}`;
-                
-                const result = await this.model.generateContent(fullPrompt);
-                const response = await result.response;
-                const generatedCode = response.text();
-                
-                return this.extractPythonCode(generatedCode);
-            }
-            
-            // Use session-based generation
+            // Always use session-based generation for better context and variety
             const session = this.getOrCreateSession(sessionId);
             const contextualPrompt = this.buildContextualPrompt(userPrompt, sessionId);
-            
+
             // Add to conversation history
             this.addSessionContext(sessionId, 'conversation', {
                 type: 'user',
                 content: userPrompt
             });
-            
+
             console.log(`Generating Manim code for session ${sessionId}`);
-            
+            console.log('Prompt preview:', contextualPrompt.substring(0, 300) + '...');
+
             const result = await session.chat.sendMessage(contextualPrompt);
             const response = await result.response;
             const generatedCode = response.text();
-            
             const extractedCode = this.extractPythonCode(generatedCode);
-            
+
             // Add to conversation history
             this.addSessionContext(sessionId, 'conversation', {
                 type: 'assistant',
                 content: `Generated Manim code (${extractedCode.length} chars)`
             });
-            
-            return extractedCode;        } catch (error) {
+
+            return extractedCode;
+        } catch (error) {
             console.error('Session-based generation failed, falling back to single-shot:', error.message);
-            
+
             // Fallback to single-shot generation
             try {
                 const fullPrompt = `${MANIM_SYSTEM_PROMPT}\n\nUser Request: ${userPrompt}`;
                 const result = await this.model.generateContent(fullPrompt);
                 const response = await result.response;
                 const generatedCode = response.text();
-                
+
                 return this.extractPythonCode(generatedCode);
             } catch (fallbackError) {
                 throw new Error(`Failed to generate Manim code: ${fallbackError.message}`);
@@ -311,54 +340,55 @@ class ManimAgent {
         this.addSessionContext(sessionId, 'error', {
             error: errorMessage,
             code: code
-        });        while (attempts < maxRetries) {            try {
+        }); while (attempts < maxRetries) {
+            try {
                 console.log(`Attempting to fix code (attempt ${attempts + 1}/${maxRetries}) for session ${sessionId}`);
-                
+
                 let fixedCode;
-                
+
                 try {
                     // Try session-based fixing first
                     const session = this.getOrCreateSession(sessionId);
-                    
+
                     const contextualFixPrompt = this.buildContextualPrompt(
-                        `Fix the following error: ${lastError}`, 
-                        sessionId, 
+                        `Fix the following error: ${lastError}`,
+                        sessionId,
                         true
                     ) + `\n\nCode to fix:\n${currentCode}\n\nError details: ${lastError}\n\nPlease provide the corrected code only.`;
-                    
+
                     const result = await session.chat.sendMessage(contextualFixPrompt);
                     const response = await result.response;
                     fixedCode = this.extractPythonCode(response.text());
                 } catch (sessionError) {
                     console.log('Session-based fixing failed, using single-shot model:', sessionError.message);
-                    
+
                     // Fallback to single-shot fixing
                     const fixPrompt = MANIM_ERROR_FIX_PROMPT
                         .replace('{error}', lastError)
                         .replace('{code}', currentCode);
-                    
+
                     const result = await this.model.generateContent(fixPrompt);
                     const response = await result.response;
                     fixedCode = this.extractPythonCode(response.text());
                 }
-                
+
                 // Test the fixed code
                 const testResult = await this.testManimCode(fixedCode);
-                
+
                 if (testResult.success) {
                     console.log(`Code fixed successfully after ${attempts + 1} attempts`);
-                    
+
                     // Add successful fix to context
                     this.addSessionContext(sessionId, 'code', {
                         code: fixedCode,
                         success: true
                     });
-                    
+
                     this.addSessionContext(sessionId, 'conversation', {
                         type: 'assistant',
                         content: `Successfully fixed code after ${attempts + 1} attempts`
                     });
-                    
+
                     return {
                         success: true,
                         code: fixedCode,
@@ -370,7 +400,7 @@ class ManimAgent {
                     currentCode = fixedCode;
                     lastError = testResult.error;
                     attempts++;
-                    
+
                     // Add failed attempt to context
                     this.addSessionContext(sessionId, 'code', {
                         code: fixedCode,
@@ -400,39 +430,39 @@ class ManimAgent {
             const timestamp = Date.now();
             const testFilename = `test_animation_${timestamp}.py`;
             const testFilePath = await this.savePythonFile(code, testFilename);
-            
+
             // Test compilation without rendering (dry run)
             const command = `python -m py_compile "${testFilePath}"`;
             await execAsync(command, { timeout: 10000 });
-            
+
             // Clean up test file
             await this.cleanup(testFilePath);
-            
+
             return { success: true };
         } catch (error) {
-            return { 
-                success: false, 
-                error: error.message 
+            return {
+                success: false,
+                error: error.message
             };
         }
-    }    async generateAndFixManimCode(userPrompt, sessionId = 'default', maxAttempts = 3) {
+    } async generateAndFixManimCode(userPrompt, sessionId = 'default', maxAttempts = 3) {
         try {
             // First attempt: Generate initial code with session context
             let code = await this.generateManimCode(userPrompt, sessionId);
             console.log(`Initial code generated for session ${sessionId}, testing...`);
-            
+
             // Test the initial code
             const testResult = await this.testManimCode(code);
-            
+
             if (testResult.success) {
                 console.log('Initial code is valid');
-                
+
                 // Add successful code to context
                 this.addSessionContext(sessionId, 'code', {
                     code: code,
                     success: true
                 });
-                
+
                 return {
                     success: true,
                     code: code,
@@ -441,12 +471,12 @@ class ManimAgent {
                     sessionId: sessionId
                 };
             }
-            
+
             console.log('Initial code has errors, attempting to fix...');
-            
+
             // If initial code fails, try to fix it with session context
             const fixResult = await this.fixManimCode(code, testResult.error, sessionId, maxAttempts - 1);
-            
+
             if (fixResult.success) {
                 return {
                     success: true,
@@ -459,20 +489,20 @@ class ManimAgent {
             } else {
                 // If fixing fails, generate completely new code with enhanced context
                 console.log('Fixing failed, generating new code with enhanced context...');
-                
+
                 const session = this.getOrCreateSession(sessionId);
                 const enhancedPrompt = `${userPrompt}\n\nIMPORTANT: Previous attempts failed with these errors: ${fixResult.finalError}. Generate working code that avoids these specific issues. Consider simpler alternatives if needed.`;
-                
+
                 const result = await session.chat.sendMessage(enhancedPrompt);
                 const response = await result.response;
                 const newCode = this.extractPythonCode(response.text());
-                
+
                 // Add conversation context
                 this.addSessionContext(sessionId, 'conversation', {
                     type: 'assistant',
                     content: `Generated fallback code after fixing attempts failed`
                 });
-                
+
                 return {
                     success: true,
                     code: newCode,
@@ -492,30 +522,31 @@ class ManimAgent {
         // Remove any markdown code blocks if present
         const codeBlockPattern = /```python\n([\s\S]*?)\n```/g;
         const match = codeBlockPattern.exec(text);
-        
+
         if (match) {
             return match[1].trim();
         }
-        
+
         // If no code blocks, assume the entire response is code
+        // Debug logging to check for uniqueness
+        console.log('Generated code length:', text.trim().length);
+        console.log('Code preview:', text.trim().substring(0, 100) + '...');
         return text.trim();
     }
 
     async savePythonFile(code, filename = 'animation.py') {
         const tempDir = process.env.TEMP_DIR || 'temp';
         const filePath = path.join(process.cwd(), tempDir, filename);
-        
+
         // Ensure temp directory exists
         const fullTempDir = path.dirname(filePath);
         if (!fs.existsSync(fullTempDir)) {
             fs.mkdirSync(fullTempDir, { recursive: true });
         }
-        
+
         fs.writeFileSync(filePath, code);
         return filePath;
-    }
-
-    async renderAnimation(pythonFilePath, outputDir = null, maxRetries = 2) {
+    } async renderAnimation(pythonFilePath, outputDir = null, maxRetries = 2) {
         let attempts = 0;
         let lastError = null;
 
@@ -523,82 +554,135 @@ class ManimAgent {
             try {
                 const animationOutputDir = outputDir || process.env.ANIMATION_OUTPUT_DIR || 'public/animations';
                 const fullOutputDir = path.join(process.cwd(), animationOutputDir);
-                
+
                 // Ensure output directory exists
                 if (!fs.existsSync(fullOutputDir)) {
                     fs.mkdirSync(fullOutputDir, { recursive: true });
                 }
 
-                // Run Manim command (Manim will create its own directory structure)
-                const command = `manim -pql "${pythonFilePath}"`;
+                // Extract class name from Python file for output filename
+                const fileContent = fs.readFileSync(pythonFilePath, 'utf8');
+                const classMatch = fileContent.match(/class\s+(\w+)\s*\(/);
+                const className = classMatch ? classMatch[1] : 'Animation';                // Clean media directory before rendering to avoid confusion
+                await this.cleanupMediaFolder();
+
+                // Use a more reliable Manim command with specific output settings
+                const timestamp = Date.now();
+
+                // Try different Manim command variations for better compatibility
+                const commands = [
+                    `manim -pql "${pythonFilePath}" ${className}`,
+                    `manim -p -ql "${pythonFilePath}" ${className}`,
+                    `python -m manim -pql "${pythonFilePath}" ${className}`,
+                    `manim "${pythonFilePath}" ${className} -pql`
+                ];
+
+                let command = commands[attempts] || commands[0];
                 console.log(`Executing Manim command (attempt ${attempts + 1}/${maxRetries}):`, command);
-                
-                const { stdout, stderr } = await execAsync(command, { 
-                    timeout: 120000 // 2 minute timeout
+
+                const { stdout, stderr } = await execAsync(command, {
+                    timeout: 180000, // 3 minute timeout
+                    cwd: process.cwd(),
+                    env: { ...process.env, PYTHONPATH: process.cwd() }
                 });
-                
-                if (stderr && !stderr.includes('INFO') && stderr.includes('ERROR')) {
+
+                console.log('Manim stdout:', stdout);
+                if (stderr) {
+                    console.log('Manim stderr:', stderr);
+                }
+
+                // Check for actual errors (Manim often outputs warnings as stderr)
+                const hasErrors = stderr && (
+                    stderr.includes('ERROR') ||
+                    stderr.includes('Exception') ||
+                    stderr.includes('Traceback') ||
+                    stderr.includes('failed') ||
+                    stderr.includes('could not')
+                );
+
+                if (hasErrors && !stdout.includes('100%')) {
                     throw new Error(`Manim rendering error: ${stderr}`);
                 }
-                
-                // Manim typically creates videos in media/videos/[filename]/[quality]/
-                // But sometimes it puts them directly in the working directory
-                // Let's search for the generated video file in multiple locations
-                const possibleDirs = [
-                    fullOutputDir,
-                    path.join(process.cwd(), 'media', 'videos'),
-                    path.join(process.cwd(), 'media'),
-                    process.cwd()
-                ];
-                
-                let foundVideo = null;
+                // Look for the generated video with improved search strategy
                 let foundVideoPath = null;
-                
-                // Search for the most recently created MP4 file
-                for (const dir of possibleDirs) {
-                    if (fs.existsSync(dir)) {
-                        const searchInDir = (searchDir) => {
-                            const items = fs.readdirSync(searchDir);
-                            for (const item of items) {
-                                const itemPath = path.join(searchDir, item);
-                                const stat = fs.statSync(itemPath);
-                                
-                                if (stat.isDirectory()) {
-                                    // Recursively search subdirectories
-                                    searchInDir(itemPath);
-                                } else if (item.endsWith('.mp4')) {
-                                    if (!foundVideo || stat.mtime > fs.statSync(foundVideoPath).mtime) {
-                                        foundVideo = item;
-                                        foundVideoPath = itemPath;
-                                    }
-                                }
-                            }
-                        };
-                        
-                        searchInDir(dir);
+
+                // Wait a moment for file system to update
+                await new Promise(resolve => setTimeout(resolve, 1000));
+
+                // Primary search: Look in standard Manim output locations
+                const baseFileName = path.basename(pythonFilePath, '.py');
+                const mediaDir = path.join(process.cwd(), 'media');
+
+                if (fs.existsSync(mediaDir)) {
+                    console.log('Searching for video in media directory...');
+                    foundVideoPath = this.findVideoInMediaDir(mediaDir, className, baseFileName);
+                }
+
+                // Secondary search: Look for any recent MP4 file
+                if (!foundVideoPath) {
+                    console.log('Searching for latest MP4 file...');
+                    foundVideoPath = this.findLatestMP4File(process.cwd());
+                }
+
+                // Tertiary search: Check current directory for common patterns
+                if (!foundVideoPath) {
+                    const possibleNames = [
+                        `${className}.mp4`,
+                        `${baseFileName}.mp4`,
+                        `${className}_${timestamp}.mp4`,
+                        `${baseFileName}_${timestamp}.mp4`
+                    ];
+
+                    for (const name of possibleNames) {
+                        const possiblePath = path.join(process.cwd(), name);
+                        if (fs.existsSync(possiblePath)) {
+                            foundVideoPath = possiblePath;
+                            console.log(`Found video with pattern search: ${possiblePath}`);
+                            break;
+                        }
                     }
                 }
-                
-                if (!foundVideo) {
-                    // List all files in working directory for debugging
-                    console.log('Available files in working directory:');
-                    const files = fs.readdirSync(process.cwd());
-                    files.forEach(file => {
+
+                if (!foundVideoPath) {
+                    // Enhanced debugging output
+                    console.log('=== DEBUGGING: No video found ===');
+                    console.log('Working directory:', process.cwd());
+                    console.log('Expected class name:', className);
+                    console.log('Python file base name:', baseFileName);
+
+                    console.log('\nFiles in working directory:');
+                    const workingDirFiles = fs.readdirSync(process.cwd());
+                    workingDirFiles.forEach(file => {
                         const filePath = path.join(process.cwd(), file);
                         const stat = fs.statSync(filePath);
                         if (stat.isFile() && file.endsWith('.mp4')) {
-                            console.log(`  Found MP4: ${file} (${stat.size} bytes, ${stat.mtime})`);
+                            console.log(`  VIDEO: ${file} (${stat.size} bytes, ${stat.mtime})`);
+                        } else if (stat.isFile()) {
+                            console.log(`  FILE: ${file} (${stat.size} bytes)`);
+                        } else {
+                            console.log(`  DIR:  ${file}/`);
                         }
                     });
-                    
-                    throw new Error('No video file was generated');
+
+                    if (fs.existsSync(mediaDir)) {
+                        console.log('\nMedia directory structure:');
+                        this.listDirectoryRecursive(mediaDir);
+                    } else {
+                        console.log('\nNo media directory found');
+                    }
+
+                    console.log('=== END DEBUGGING ===\n');
+                    throw new Error(`No video file was generated by Manim. Class: ${className}, Base: ${baseFileName}`);
                 }
-                  // Move the video to our desired output directory if it's not already there
-                const finalVideoPath = path.join(fullOutputDir, foundVideo);
+
+                // Move/copy video to output directory
+                const finalVideoName = `${className}_${timestamp}.mp4`;
+                const finalVideoPath = path.join(fullOutputDir, finalVideoName);
+
                 if (foundVideoPath !== finalVideoPath) {
                     fs.copyFileSync(foundVideoPath, finalVideoPath);
-                    console.log(`Moved video from ${foundVideoPath} to ${finalVideoPath}`);
-                    
+                    console.log(`Copied video from ${foundVideoPath} to ${finalVideoPath}`);
+
                     // Clean up the original file
                     try {
                         fs.unlinkSync(foundVideoPath);
@@ -609,11 +693,11 @@ class ManimAgent {
 
                 // Clean up media folder after successful rendering
                 await this.cleanupMediaFolder();
-                
+
                 return {
                     success: true,
-                    videoPath: `/animations/${foundVideo}`,
-                    videoFileName: foundVideo,
+                    videoPath: `/animations/${finalVideoName}`,
+                    videoFileName: finalVideoName,
                     stdout,
                     stderr,
                     attempts: attempts + 1
@@ -622,50 +706,50 @@ class ManimAgent {
                 attempts++;
                 lastError = error;
                 console.error(`Rendering attempt ${attempts} failed:`, error.message);
-                
+
                 if (attempts < maxRetries) {
                     console.log(`Retrying rendering in 2 seconds... (${attempts}/${maxRetries})`);
                     await new Promise(resolve => setTimeout(resolve, 2000));
                 }
             }
         }
-        
+
         throw new Error(`Failed to render animation after ${maxRetries} attempts: ${lastError.message}`);
-    }    async renderAnimationWithErrorHandling(code, sessionId = 'default', maxRetries = 3) {
+    } async renderAnimationWithErrorHandling(code, sessionId = 'default', maxRetries = 3) {
         try {
             // First, test if the code compiles
             const testResult = await this.testManimCode(code);
-            
+
             if (!testResult.success) {
                 console.log('Code has compilation errors, attempting to fix...');
                 const fixResult = await this.fixManimCode(code, testResult.error, sessionId, 2);
-                
+
                 if (!fixResult.success) {
                     throw new Error(`Code compilation failed: ${fixResult.finalError}`);
                 }
-                
+
                 code = fixResult.code;
                 console.log('Code fixed successfully, proceeding with rendering...');
             }
-            
+
             // Save the (possibly fixed) code
             const timestamp = Date.now();
             const filename = `animation_${timestamp}.py`;
             const filePath = await this.savePythonFile(code, filename);
-              // Attempt to render
+            // Attempt to render
             try {
                 const renderResult = await this.renderAnimation(filePath, null, maxRetries);
-                
+
                 // Add successful render to session context
                 this.addSessionContext(sessionId, 'conversation', {
                     type: 'assistant',
                     content: `Successfully rendered animation: ${renderResult.videoFileName}`
                 });
-                
+
                 // Cleanup Python file and temp files
                 await this.cleanup(filePath);
                 await this.cleanupTempFiles();
-                
+
                 return {
                     success: true,
                     ...renderResult,
@@ -676,29 +760,29 @@ class ManimAgent {
             } catch (renderError) {
                 // If rendering fails, it might be a code logic issue
                 console.log('Rendering failed, attempting to improve code...');
-                
+
                 const session = this.getOrCreateSession(sessionId);
                 const improvePrompt = `The code compiled but failed during rendering with error: ${renderError.message}. Make the animation simpler and more robust.`;
-                
+
                 const result = await session.chat.sendMessage(improvePrompt);
                 const response = await result.response;
                 const improvedCode = this.extractPythonCode(response.text());
-                
+
                 // Try rendering the improved code
                 const improvedFilePath = await this.savePythonFile(improvedCode, `improved_${filename}`);
                 const improvedResult = await this.renderAnimation(improvedFilePath, null, 1);
-                
+
                 // Add improvement context
                 this.addSessionContext(sessionId, 'conversation', {
                     type: 'assistant',
                     content: `Improved and successfully rendered animation after initial failure`
                 });
-                
+
                 // Cleanup both files and temp files
                 await this.cleanup(filePath);
                 await this.cleanup(improvedFilePath);
                 await this.cleanupTempFiles();
-                
+
                 return {
                     success: true,
                     ...improvedResult,
@@ -711,33 +795,33 @@ class ManimAgent {
         } catch (error) {
             throw new Error(`Failed to render animation with error handling: ${error.message}`);
         }
-    }    async improveManimCode(code, feedback, sessionId = 'default') {
+    } async improveManimCode(code, feedback, sessionId = 'default') {
         try {
             let improvedCode;
-            
+
             try {
                 // Try session-based improvement first
                 const session = this.getOrCreateSession(sessionId);
-                
+
                 const contextualPrompt = this.buildContextualPrompt(
                     `Improve the following code: ${feedback}`,
                     sessionId
                 ) + `\n\nCode to improve:\n${code}`;
-                
+
                 const result = await session.chat.sendMessage(contextualPrompt);
                 const response = await result.response;
                 improvedCode = this.extractPythonCode(response.text());
             } catch (sessionError) {
                 console.log('Session-based improvement failed, using single-shot model:', sessionError.message);
-                
+
                 // Fallback to single-shot improvement
                 const improvePrompt = `${MANIM_SYSTEM_PROMPT}\n\nImprove the following Manim code based on this feedback: ${feedback}\n\nOriginal code:\n${code}\n\nProvide only the improved code:`;
-                
+
                 const result = await this.model.generateContent(improvePrompt);
                 const response = await result.response;
                 improvedCode = this.extractPythonCode(response.text());
             }
-            
+
             // Add improvement to context if session exists
             try {
                 this.addSessionContext(sessionId, 'conversation', {
@@ -747,7 +831,7 @@ class ManimAgent {
             } catch (contextError) {
                 console.warn('Failed to add context, but improvement succeeded:', contextError.message);
             }
-            
+
             return improvedCode;
         } catch (error) {
             console.warn('Failed to improve code, returning original:', error.message);
@@ -807,9 +891,9 @@ class ManimAgent {
         const requiredImports = code.includes('from manim import') || code.includes('import manim');
         const hasSceneClass = code.includes('class') && code.includes('Scene');
         const hasConstructMethod = code.includes('def construct');
-        
+
         return requiredImports && hasSceneClass && hasConstructMethod;
-    }    async cleanup(filePath) {
+    } async cleanup(filePath) {
         try {
             if (fs.existsSync(filePath)) {
                 fs.unlinkSync(filePath);
@@ -823,30 +907,30 @@ class ManimAgent {
     async cleanupMediaFolder() {
         try {
             const mediaDir = path.join(process.cwd(), 'media');
-            
+
             if (fs.existsSync(mediaDir)) {
                 console.log('Cleaning up media folder...');
-                
+
                 // Recursively remove media directory and all its contents
                 const removeDirectory = (dirPath) => {
                     if (fs.existsSync(dirPath)) {
                         const files = fs.readdirSync(dirPath);
-                        
+
                         files.forEach(file => {
                             const filePath = path.join(dirPath, file);
                             const stat = fs.statSync(filePath);
-                            
+
                             if (stat.isDirectory()) {
                                 removeDirectory(filePath);
                             } else {
                                 fs.unlinkSync(filePath);
                             }
                         });
-                        
+
                         fs.rmdirSync(dirPath);
                     }
                 };
-                
+
                 removeDirectory(mediaDir);
                 console.log('Media folder cleaned up successfully');
             }
@@ -858,21 +942,21 @@ class ManimAgent {
     async cleanupTempFiles() {
         try {
             const tempDir = path.join(process.cwd(), process.env.TEMP_DIR || 'temp');
-            
+
             if (fs.existsSync(tempDir)) {
                 console.log('Cleaning up temporary files...');
-                
+
                 const files = fs.readdirSync(tempDir);
                 let cleanedCount = 0;
-                
+
                 files.forEach(file => {
                     try {
                         const filePath = path.join(tempDir, file);
                         const stat = fs.statSync(filePath);
-                        
+
                         // Clean up files older than 1 hour
                         const oneHourAgo = Date.now() - (60 * 60 * 1000);
-                        
+
                         if (stat.mtime.getTime() < oneHourAgo) {
                             fs.unlinkSync(filePath);
                             cleanedCount++;
@@ -881,7 +965,7 @@ class ManimAgent {
                         console.warn(`Failed to clean up file ${file}:`, fileError.message);
                     }
                 });
-                
+
                 if (cleanedCount > 0) {
                     console.log(`Cleaned up ${cleanedCount} temporary files`);
                 }
@@ -925,12 +1009,95 @@ class ManimAgent {
     async checkSystemRequirements() {
         const manim = await this.checkManimInstallation();
         const ffmpeg = await this.checkFFmpegInstallation();
-        
+
         return {
             manim,
             ffmpeg,
             allRequirementsMet: manim.installed && ffmpeg.installed
         };
+    }
+
+    /**
+     * Find the most recently created MP4 file in a directory and subdirectories
+     */
+    findLatestMP4File(searchDir) {
+        let latestFile = null;
+        let latestTime = 0;
+
+        const searchRecursive = (dir) => {
+            try {
+                const items = fs.readdirSync(dir);
+                for (const item of items) {
+                    const itemPath = path.join(dir, item);
+                    const stat = fs.statSync(itemPath);
+
+                    if (stat.isDirectory()) {
+                        searchRecursive(itemPath);
+                    } else if (item.endsWith('.mp4')) {
+                        if (stat.mtime.getTime() > latestTime) {
+                            latestTime = stat.mtime.getTime();
+                            latestFile = itemPath;
+                        }
+                    }
+                }
+            } catch (error) {
+                console.warn(`Could not search directory ${dir}:`, error.message);
+            }
+        };
+
+        searchRecursive(searchDir);
+        return latestFile;
+    }
+
+    /**
+     * Find video file in media directory with various naming patterns
+     */
+    findVideoInMediaDir(mediaDir, className, baseFileName) {
+        const possiblePaths = [
+            // Standard Manim output structure: media/videos/filename/quality/ClassName.mp4
+            path.join(mediaDir, 'videos', baseFileName, '480p15', `${className}.mp4`),
+            path.join(mediaDir, 'videos', baseFileName, '720p30', `${className}.mp4`),
+            path.join(mediaDir, 'videos', baseFileName, '1080p60', `${className}.mp4`),
+            path.join(mediaDir, 'videos', baseFileName, 'low_quality', `${className}.mp4`),
+            path.join(mediaDir, 'videos', baseFileName, 'medium_quality', `${className}.mp4`),
+            path.join(mediaDir, 'videos', baseFileName, 'high_quality', `${className}.mp4`),
+            // Alternative patterns
+            path.join(mediaDir, 'videos', `${className}.mp4`),
+            path.join(mediaDir, `${className}.mp4`),
+            path.join(mediaDir, `${baseFileName}.mp4`)
+        ];
+
+        for (const videoPath of possiblePaths) {
+            if (fs.existsSync(videoPath)) {
+                console.log(`Found video in media directory: ${videoPath}`);
+                return videoPath;
+            }
+        }
+
+        // If standard paths don't work, search recursively
+        return this.findLatestMP4File(mediaDir);
+    }
+
+    /**
+     * List directory contents recursively for debugging
+     */
+    listDirectoryRecursive(dir, prefix = '') {
+        try {
+            const items = fs.readdirSync(dir);
+            items.forEach(item => {
+                const itemPath = path.join(dir, item);
+                const stat = fs.statSync(itemPath);
+
+                if (stat.isDirectory()) {
+                    console.log(`${prefix}📁 ${item}/`);
+                    this.listDirectoryRecursive(itemPath, prefix + '  ');
+                } else {
+                    console.log(`${prefix}📄 ${item} (${stat.size} bytes)`);
+                }
+            });
+        } catch (error) {
+            console.warn(`Could not list directory ${dir}:`, error.message);
+        }
     }
 }
 

@@ -160,18 +160,19 @@ router.post('/render', validateCode, async (req, res) => {
 // Session management routes
 
 // Get session information
-router.get('/session/:sessionId?', async (req, res) => {
+router.get('/session/:sessionId', async (req, res) => {
     try {
         const agent = new ManimAgent();
-        const sessionId = req.params.sessionId || 'default';
+        const { sessionId } = req.params;
+        
+        console.log(`Getting session info for: ${sessionId}`);
         
         const sessionInfo = agent.getSessionInfo(sessionId);
         
         return res.json({
             success: true,
             sessionId: sessionId,
-            sessionInfo: sessionInfo,
-            activeSessions: agent.getActiveSessions()
+            ...sessionInfo
         });
     } catch (error) {
         console.error('Error getting session info:', error);
@@ -183,22 +184,48 @@ router.get('/session/:sessionId?', async (req, res) => {
     }
 });
 
-// Clear a specific session
+// Clear session
 router.delete('/session/:sessionId', async (req, res) => {
     try {
         const agent = new ManimAgent();
-        const sessionId = req.params.sessionId;
+        const { sessionId } = req.params;
+        
+        console.log(`Clearing session: ${sessionId}`);
         
         const cleared = agent.clearSession(sessionId);
         
         return res.json({
             success: true,
             cleared: cleared,
-            message: cleared ? `Session ${sessionId} cleared` : `Session ${sessionId} not found`,
-            activeSessions: agent.getActiveSessions()
+            sessionId: sessionId,
+            message: cleared ? 'Session cleared successfully' : 'Session not found'
         });
     } catch (error) {
         console.error('Error clearing session:', error);
+        
+        return res.status(500).json({
+            error: error.message,
+            success: false
+        });
+    }
+});
+
+// Get all active sessions
+router.get('/sessions', async (req, res) => {
+    try {
+        const agent = new ManimAgent();
+        
+        console.log('Getting all active sessions');
+        
+        const activeSessions = agent.getActiveSessions();
+        
+        return res.json({
+            success: true,
+            activeSessions: activeSessions,
+            count: activeSessions.length
+        });
+    } catch (error) {
+        console.error('Error getting active sessions:', error);
         
         return res.status(500).json({
             error: error.message,
