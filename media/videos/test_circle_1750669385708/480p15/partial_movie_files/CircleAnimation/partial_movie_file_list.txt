@@ -1,5 +1,0 @@
-# This file is used internally by FFMPEG.
-file 'file:D:/taxim/backend/media/videos/test_circle_1750669385708/480p15/partial_movie_files/CircleAnimation/1185818338_3879037160_223132457.mp4'
-file 'file:D:/taxim/backend/media/videos/test_circle_1750669385708/480p15/partial_movie_files/CircleAnimation/624642324_3890345977_4202589233.mp4'
-file 'file:D:/taxim/backend/media/videos/test_circle_1750669385708/480p15/partial_movie_files/CircleAnimation/624642324_3501956803_568105543.mp4'
-file 'file:D:/taxim/backend/media/videos/test_circle_1750669385708/480p15/partial_movie_files/CircleAnimation/624642324_3890345977_3194112205.mp4'

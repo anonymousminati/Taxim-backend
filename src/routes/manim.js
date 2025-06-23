@@ -17,41 +17,32 @@ router.post('/generate', validatePrompt, async (req, res) => {
 
         console.log('Generating Manim code for prompt:', prompt);
 
-        // Generate Manim code
-        const manimCode = await agent.generateManimCode(prompt);
+        // Generate Manim code with error handling and automatic fixes
+        const generationResult = await agent.generateAndFixManimCode(prompt, 3);
         
-        // Validate the generated code
-        if (!agent.isValidManimCode(manimCode)) {
-            return res.status(400).json({ 
-                error: 'Generated code is not valid Manim code',
-                code: manimCode,
-                success: false
-            });
-        }
+        console.log('Generated code result:', {
+            success: generationResult.success,
+            attempts: generationResult.attempts,
+            wasFixed: generationResult.wasFixed
+        });
 
-        console.log('Generated valid Manim code');
-
-        // Save Python file
-        const timestamp = Date.now();
-        const filename = `animation_${timestamp}.py`;
-        const filePath = await agent.savePythonFile(manimCode, filename);
-
-        console.log('Saved Python file:', filePath);
-
-        // Render animation
-        const renderResult = await agent.renderAnimation(filePath);
+        // Render animation with error handling
+        const renderResult = await agent.renderAnimationWithErrorHandling(generationResult.code, 3);
 
         console.log('Animation rendered successfully:', renderResult.videoPath);
 
-        // Cleanup Python file
-        await agent.cleanup(filePath);
-
         return res.json({
             success: true,
-            code: manimCode,
+            code: renderResult.code,
             videoPath: renderResult.videoPath,
             videoFileName: renderResult.videoFileName,
-            message: 'Animation generated successfully'
+            message: 'Animation generated successfully',
+            metadata: {
+                generationAttempts: generationResult.attempts,
+                wasCodeFixed: generationResult.wasFixed || renderResult.wasCodeFixed,
+                wasImproved: renderResult.wasImproved || false,
+                renderingAttempts: renderResult.attempts
+            }
         });
 
     } catch (error) {
@@ -124,36 +115,24 @@ router.post('/render', validateCode, async (req, res) => {
     try {
         const { code } = req.body;
 
-        // Validate the code
-        if (!agent.isValidManimCode(code)) {
-            return res.status(400).json({ 
-                error: 'Provided code is not valid Manim code',
-                success: false
-            });
-        }
-
         console.log('Rendering provided Manim code');
 
-        // Save Python file
-        const timestamp = Date.now();
-        const filename = `custom_animation_${timestamp}.py`;
-        const filePath = await agent.savePythonFile(code, filename);
-
-        console.log('Saved custom Python file:', filePath);
-
-        // Render animation
-        const renderResult = await agent.renderAnimation(filePath);
+        // Render animation with error handling and automatic fixes
+        const renderResult = await agent.renderAnimationWithErrorHandling(code, 3);
 
         console.log('Custom animation rendered successfully:', renderResult.videoPath);
-
-        // Cleanup Python file
-        await agent.cleanup(filePath);
 
         return res.json({
             success: true,
             videoPath: renderResult.videoPath,
             videoFileName: renderResult.videoFileName,
-            message: 'Animation rendered successfully'
+            message: 'Animation rendered successfully',
+            code: renderResult.code, // Return the potentially fixed code
+            metadata: {
+                wasCodeFixed: renderResult.wasCodeFixed || false,
+                wasImproved: renderResult.wasImproved || false,
+                renderingAttempts: renderResult.attempts
+            }
         });
 
     } catch (error) {
