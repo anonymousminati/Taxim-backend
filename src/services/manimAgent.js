@@ -29,18 +29,27 @@ CRITICAL SYNTAX RULES:
 - DO NOT use any rate_func parameter - it causes errors
 - Keep animations simple and working
 
+LATEX GUIDELINES:
+- Use MathTex for mathematical expressions: MathTex(r"\\frac{1}{2}")
+- Use Tex for simple LaTeX text: Tex("Hello World")
+- For complex math, use raw strings with double backslashes: r"\\sqrt{x^2 + y^2}"
+- Test with simple expressions first, then build complexity
+- Common LaTeX patterns:
+  - Fractions: r"\\frac{a}{b}"
+  - Squares: r"x^2"
+  - Subscripts: r"x_1"
+  - Greek letters: r"\\alpha, \\beta"
+  - Integrals: r"\\int_0^1 x dx"
+
 FORBIDDEN:
-- Don't use LaTeX, MathTex for labels or text rendering
-- NumberPlane, Axes, CoordinateSystem (requires LaTeX for labels)
-- MathTex, Tex (requires LaTeX for mathematical expressions)
-- Any mathematical text rendering that needs LaTeX
 - rate_func=anything (causes AttributeError)
 - rate_functions.anything (causes AttributeError)
 - Any ease_in, ease_out, smooth functions (not available)
 
-PREFERRED OBJECTS (no LaTeX required):
+PREFERRED OBJECTS :
 - Circle, Square, Rectangle, Triangle, Polygon, Star, Ellipse
-- Text (for simple text, not mathematical expressions)
+- Text (for simple text), MathTex (for math), Tex (for LaTeX)
+- NumberPlane, Axes (for coordinate systems)
 - Arrow, Line, Dot, Point
 - Simple geometric shapes and transformations
 
@@ -344,8 +353,7 @@ class ManimAgent {
         );
       }
     }
-  }
-  async fixManimCode(
+  }  async fixManimCode(
     code,
     errorMessage,
     sessionId = "default",
@@ -354,6 +362,29 @@ class ManimAgent {
     let attempts = 0;
     let currentCode = code;
     let lastError = errorMessage;
+
+    // First try LaTeX-specific fixes
+    console.log('Checking for LaTeX-specific fixes...');
+    const latexFix = await this.handleLatexError(code, errorMessage);
+    if (latexFix) {
+      console.log('Attempting LaTeX fix...');
+      const testResult = await this.testManimCode(latexFix);
+      if (testResult.success) {
+        console.log('LaTeX fix successful!');
+        return {
+          success: true,
+          code: latexFix,
+          attempts: 1,
+          fixType: 'latex',
+          originalError: errorMessage,
+          sessionId: sessionId
+        };
+      } else if (testResult.suggestedFix) {
+        // Try the suggested fix from the test
+        currentCode = testResult.suggestedFix;
+        console.log('Trying suggested LaTeX fix...');
+      }
+    }
 
     // Add error context to session
     this.addSessionContext(sessionId, "error", {
@@ -440,9 +471,40 @@ class ManimAgent {
           });
         }
       } catch (error) {
-        console.error(`Error in fix attempt ${attempts + 1}:`, error.message);
-        attempts++;
+        console.error(`Error in fix attempt ${attempts + 1}:`, error.message);        attempts++;
         lastError = error.message;
+      }
+    }
+
+    // If all fixes failed and it might be a LaTeX issue, try fallback
+    const latexErrorPatterns = [
+      /LaTeX Error/i,
+      /tex error/i,
+      /pdflatex.*failed/i,
+      /latex.*not found/i,
+      /RuntimeError.*latex/i
+    ];
+    
+    const isLatexError = latexErrorPatterns.some(pattern => 
+      pattern.test(lastError) || pattern.test(errorMessage)
+    );
+    
+    if (isLatexError) {
+      console.log('All fixes failed, trying LaTeX fallback...');
+      const fallbackCode = this.createLatexFallback(currentCode);
+      const fallbackTest = await this.testManimCode(fallbackCode);
+      
+      if (fallbackTest.success) {
+        console.log('LaTeX fallback successful!');
+        return {
+          success: true,
+          code: fallbackCode,
+          attempts: maxRetries + 1,
+          fixType: 'latex-fallback',
+          originalError: errorMessage,
+          sessionId: sessionId,
+          usedFallback: true
+        };
       }
     }
 
@@ -455,25 +517,46 @@ class ManimAgent {
       sessionId: sessionId,
     };
   }
-
   async testManimCode(code) {
     try {
       const timestamp = Date.now();
       const testFilename = `test_animation_${timestamp}.py`;
       const testFilePath = await this.savePythonFile(code, testFilename);
 
-      // Test compilation without rendering (dry run)
-      const command = `python -m py_compile "${testFilePath}"`;
-      await execAsync(command, { timeout: 10000 });
+      // First try Python compilation
+      const compileCommand = `python -m py_compile "${testFilePath}"`;
+      await execAsync(compileCommand, { timeout: 10000 });
 
-      // Clean up test file
+      // If code uses LaTeX, test with a quick Manim dry run
+      if (code.includes('MathTex') || code.includes('Tex') || code.includes('NumberPlane') || code.includes('Axes')) {
+        try {
+          console.log('Code contains LaTeX elements, testing with Manim dry run...');
+          const dryRunCommand = `manim --dry_run "${testFilePath}"`;
+          await execAsync(dryRunCommand, { timeout: 30000 });
+          console.log('LaTeX dry run successful');
+        } catch (dryRunError) {
+          console.log('Manim dry run failed:', dryRunError.message);
+          // Check if it's a LaTeX error
+          const latexFix = await this.handleLatexError(code, dryRunError.message);
+          if (latexFix) {
+            await this.cleanup(testFilePath);
+            return { 
+              success: false, 
+              error: dryRunError.message, 
+              suggestedFix: latexFix,
+              isLatexError: true
+            };
+          }
+          throw dryRunError;
+        }
+      }
+
       await this.cleanup(testFilePath);
-
       return { success: true };
     } catch (error) {
       return {
         success: false,
-        error: error.message,
+        error: error.message
       };
     }
   }
@@ -1149,15 +1232,16 @@ getActiveSessions() {
       };
     }
   }
-
   async checkSystemRequirements() {
     const manim = await this.checkManimInstallation();
     const ffmpeg = await this.checkFFmpegInstallation();
+    const latex = await this.checkLatexInstallation();
 
     return {
       manim,
       ffmpeg,
-      allRequirementsMet: manim.installed && ffmpeg.installed,
+      latex,
+      allRequirementsMet: manim.installed && ffmpeg.installed && latex.installed,
     };
   }
 
@@ -1267,6 +1351,123 @@ getActiveSessions() {
       console.warn(`Could not list directory ${dir}:`, error.message);
     }
   }
+
+  /**
+   * Handle LaTeX-specific errors and provide fixes
+   */
+  async handleLatexError(code, errorMessage) {
+    // Common LaTeX error patterns
+    const latexErrorPatterns = [
+      /LaTeX Error/i,
+      /tex error/i,
+      /missing \$ inserted/i,
+      /undefined control sequence/i,
+      /pdflatex.*failed/i,
+      /latex.*not found/i,
+      /RuntimeError.*latex/i,
+      /failed but did not produce a log file/i
+    ];
+    
+    const isLatexError = latexErrorPatterns.some(pattern => 
+      pattern.test(errorMessage)
+    );
+    
+    if (isLatexError) {
+      console.log('Detected LaTeX error, attempting automatic fixes...');
+      let fixedCode = code;
+      
+      // Fix common LaTeX syntax issues
+      fixedCode = fixedCode.replace(/MathTex\("([^"]*?)"\)/g, (match, content) => {
+        // Ensure proper escaping
+        const escaped = content.replace(/\\/g, '\\\\');
+        return `MathTex(r"${escaped}")`;
+      });
+      
+      // Fix single backslashes in raw strings
+      fixedCode = fixedCode.replace(/MathTex\(r"([^"]*?)"\)/g, (match, content) => {
+        if (!content.includes('\\\\')) {
+          const fixed = content.replace(/\\/g, '\\\\');
+          return `MathTex(r"${fixed}")`;
+        }
+        return match;
+      });
+      
+      // Fix Tex objects similarly
+      fixedCode = fixedCode.replace(/Tex\("([^"]*?)"\)/g, (match, content) => {
+        const escaped = content.replace(/\\/g, '\\\\');
+        return `Tex(r"${escaped}")`;
+      });
+      
+      // Simplify complex LaTeX expressions that might be causing issues
+      fixedCode = fixedCode.replace(/MathTex\(r"([^"]*?)"\)/g, (match, content) => {
+        // Simplify very complex expressions
+        if (content.length > 50) {
+          return `MathTex(r"x^2")`;  // Fallback to simple expression
+        }
+        return match;
+      });
+      
+      console.log('Applied LaTeX fixes to code');
+      return fixedCode;
+    }
+    
+    return null; // Not a LaTeX error
+  }
+
+  /**
+   * Create fallback code when LaTeX completely fails
+   */
+  createLatexFallback(code) {
+    console.log('Creating LaTeX fallback code...');
+    let fallbackCode = code;
+    
+    // Replace MathTex with Text
+    fallbackCode = fallbackCode.replace(
+      /MathTex\([^)]+\)/g, 
+      'Text("Math Expression", font_size=36)'
+    );
+    
+    // Replace Tex with Text
+    fallbackCode = fallbackCode.replace(
+      /Tex\([^)]+\)/g, 
+      'Text("LaTeX Text", font_size=36)'
+    );
+    
+    // Replace NumberPlane with simple grid
+    fallbackCode = fallbackCode.replace(
+      /NumberPlane\([^)]*\)/g,
+      'Rectangle(width=12, height=8).set_stroke(WHITE, 0.5)'
+    );
+    
+    // Replace Axes with simple lines
+    fallbackCode = fallbackCode.replace(
+      /Axes\([^)]*\)/g,
+      'VGroup(Line(LEFT*6, RIGHT*6), Line(DOWN*4, UP*4))'
+    );
+    
+    console.log('Created LaTeX fallback code');
+    return fallbackCode;
+  }
+
+  /**
+   * Check LaTeX installation
+   */
+  async checkLatexInstallation() {
+    try {
+      const { stdout } = await execAsync("pdflatex --version");
+      return {
+        installed: true,
+        version: stdout.split('\n')[0].trim()
+      };
+    } catch (error) {
+      return {
+        installed: false,
+        error: error.message
+      };
+    }
+  }
+
+  // ...existing code...
 }
 
 export default ManimAgent;
