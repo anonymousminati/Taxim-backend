@@ -6,7 +6,7 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import { 
   MANIM_SYSTEM_PROMPT, 
-  MANIM_ERROR_FIX_PROMPT, 
+  MANIM_ERROR_FIX_PROMPT,
   PROMPT_CONFIG 
 } from "../prompts.js";
 import { 
@@ -40,6 +40,11 @@ import {
   PerformanceMonitor,
   OperationTimer
 } from "../utils/monitoringUtils.js";
+import {
+  categorizeError,
+  applyProgressiveErrorHandling,
+  generateErrorExplanation
+} from "../utils/enhancedErrorHandling.js";
 
 const execAsync = promisify(exec);
 
@@ -393,31 +398,71 @@ class ManimAgent {
         throw new ManimError(`Failed to generate Manim code: ${fallbackError.message}`, 'GENERATION_FAILED', { sessionId });
       }
     }
-  }/**
-   * Try LaTeX-specific fixes first as they're faster and more reliable
+  }  /**
+   * Enhanced LaTeX-specific fixes using progressive error handling
    */
   async _tryLatexFix(code, errorMessage, sessionId) {
     console.log('Checking for LaTeX-specific fixes...');
-    const latexFix = await handleLatexError(code, errorMessage);
-    if (!latexFix) return null;
-
-    console.log('Attempting LaTeX fix...');
-    const testResult = await this.testManimCode(latexFix);
-    if (testResult.success) {
-      console.log('LaTeX fix successful!');
-      return {
-        success: true,
-        code: latexFix,
-        attempts: 1,
-        fixType: 'latex',
-        originalError: errorMessage,
-        sessionId: sessionId
-      };
+    
+    // Categorize the error first
+    const errorInfo = categorizeError(errorMessage);
+    
+    // Only proceed if it's a LaTeX-related error
+    if (errorInfo.category !== 'LaTeX' && !isLatexError(errorMessage)) {
+      return null;
     }
     
-    if (testResult.suggestedFix) {
-      console.log('Trying suggested LaTeX fix...');
-      return { suggestedCode: testResult.suggestedFix };
+    console.log(`Detected ${errorInfo.type} error - applying progressive LaTeX fixes...`);
+    
+    // Generate user-friendly error explanation
+    const explanation = generateErrorExplanation(errorInfo, 1);
+    console.log('Error explanation:', explanation);
+    
+    // Try progressive error handling levels
+    for (let level = 1; level <= 3; level++) {
+      console.log(`Attempting LaTeX fix level ${level}...`);
+      
+      const fixResult = applyProgressiveErrorHandling(code, errorInfo, level);
+      const testResult = await this.testManimCode(fixResult.code);
+      
+      if (testResult.success) {
+        console.log(`LaTeX fix level ${level} successful!`);
+        return {
+          success: true,
+          code: fixResult.code,
+          attempts: 1,
+          fixType: `latex-level-${level}`,
+          originalError: errorMessage,
+          appliedFixes: fixResult.appliedFixes,
+          errorCategory: errorInfo.category,
+          userMessage: errorInfo.message,
+          sessionId: sessionId
+        };
+      }
+      
+      console.log(`LaTeX fix level ${level} failed, trying next level...`);
+    }
+    
+    // If all levels failed, try the legacy LaTeX fix as fallback
+    const legacyFix = await handleLatexError(code, errorMessage);
+    if (legacyFix) {
+      const testResult = await this.testManimCode(legacyFix);
+      if (testResult.success) {
+        console.log('Legacy LaTeX fix successful!');
+        return {
+          success: true,
+          code: legacyFix,
+          attempts: 1,
+          fixType: 'latex-legacy',
+          originalError: errorMessage,
+          sessionId: sessionId
+        };
+      }
+      
+      if (testResult.suggestedFix) {
+        console.log('Legacy LaTeX fix provided suggestion...');
+        return { suggestedCode: testResult.suggestedFix };
+      }
     }
     
     return null;
@@ -463,28 +508,58 @@ class ManimAgent {
 
   /**
    * Try LaTeX fallback as last resort
+   */  /**
+   * Enhanced LaTeX fallback using progressive error handling
    */
   async _tryLatexFallback(currentCode, lastError, errorMessage, maxRetries, sessionId) {
-    if (!isLatexError(lastError) && !isLatexError(errorMessage)) {
+    // Check if this is a LaTeX-related error
+    const errorInfo = categorizeError(lastError || errorMessage);
+    if (errorInfo.category !== 'LaTeX' && !isLatexError(lastError) && !isLatexError(errorMessage)) {
       return null;
     }
 
-    console.log('All fixes failed, trying LaTeX fallback...');
-    const fallbackCode = createLatexFallback(currentCode);
-    const fallbackTest = await this.testManimCode(fallbackCode);
+    console.log('All fixes failed, trying enhanced LaTeX fallback...');
+    
+    // Generate user-friendly explanation for fallback
+    const explanation = generateErrorExplanation(errorInfo, maxRetries + 1);
+    console.log('Fallback explanation:', explanation);
+    
+    // Try level 3 (most aggressive) progressive error handling
+    const fallbackResult = applyProgressiveErrorHandling(currentCode, errorInfo, 3);
+    const fallbackTest = await this.testManimCode(fallbackResult.code);
     
     if (fallbackTest.success) {
-      console.log('LaTeX fallback successful!');
+      console.log('Enhanced LaTeX fallback successful!');
       return {
         success: true,
-        code: fallbackCode,
+        code: fallbackResult.code,
         attempts: maxRetries + 1,
-        fixType: 'latex-fallback',
+        fixType: 'enhanced-latex-fallback',
         originalError: errorMessage,
+        appliedFixes: fallbackResult.appliedFixes,
+        errorCategory: errorInfo.category,
+        userMessage: errorInfo.message,
         sessionId: sessionId,
         usedFallback: true
       };
     }
+    
+    // If enhanced fallback fails, try legacy fallback
+    console.log('Enhanced fallback failed, trying legacy fallback...');
+    const legacyFallbackCode = createLatexFallback(currentCode);
+    const legacyTest = await this.testManimCode(legacyFallbackCode);
+    
+    if (legacyTest.success) {
+      console.log('Legacy LaTeX fallback successful!');
+      return {
+        success: true,
+        code: legacyFallbackCode,
+        attempts: maxRetries + 1,
+        fixType: 'legacy-latex-fallback',
+        originalError: errorMessage,
+        sessionId: sessionId,
+        usedFallback: true
+      };    }
     
     return null;
   }

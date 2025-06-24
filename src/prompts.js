@@ -29,17 +29,22 @@ CRITICAL SYNTAX RULES:
 - DO NOT use any rate_func parameter - it causes errors
 - Keep animations simple and working
 
-LATEX GUIDELINES:
-- Use MathTex for mathematical expressions: MathTex(r"\\\\frac{1}{2}")
-- Use Tex for simple LaTeX text: Tex("Hello World")
-- For complex math, use raw strings with double backslashes: r"\\\\sqrt{x^2 + y^2}"
-- Test with simple expressions first, then build complexity
-- Common LaTeX patterns:
-  - Fractions: r"\\\\frac{a}{b}"
-  - Squares: r"x^2"
-  - Subscripts: r"x_1"
-  - Greek letters: r"\\\\alpha, \\\\beta"
-  - Integrals: r"\\\\int_0^1 x dx"
+LATEX GUIDELINES - CRITICAL FOR ERROR PREVENTION:
+- ALWAYS use raw strings (r"") for LaTeX: MathTex(r"\\frac{1}{2}") NOT MathTex("\\frac{1}{2}")
+- ALWAYS double backslashes in raw strings: r"\\frac{a}{b}" NOT r"\frac{a}{b}"
+- Use MathTex for mathematical expressions: MathTex(r"\\frac{1}{2}")
+- Use Tex for simple LaTeX text: Tex(r"Hello World")
+- Start with simple expressions, add complexity gradually
+- Common LaTeX patterns (ALWAYS with raw strings and double backslashes):
+  - Fractions: MathTex(r"\\frac{a}{b}")
+  - Squares: MathTex(r"x^2")
+  - Subscripts: MathTex(r"x_1")
+  - Greek letters: MathTex(r"\\alpha"), MathTex(r"\\beta")
+  - Integrals: MathTex(r"\\int_0^1 x dx")
+  - Square roots: MathTex(r"\\sqrt{x^2 + y^2}")
+- AVOID complex expressions initially - build up from simple ones
+- If LaTeX fails, use Text objects as fallback: Text("Math Expression")
+- Test patterns: x^2, \\frac{1}{2}, \\alpha, \\sqrt{2}
 
 FORBIDDEN:
 - rate_func=anything (causes AttributeError)
@@ -86,6 +91,24 @@ COMMON MANIM FIXES:
 - Use proper animation methods (Create, Write, Transform, FadeIn, etc.)
 - Ensure proper method chaining with self.play() and self.add()
 
+LATEX ERROR FIXES - HIGHEST PRIORITY:
+- ALWAYS convert to raw strings: MathTex("...") → MathTex(r"...")
+- ALWAYS double backslashes: MathTex(r"\frac{1}{2}") → MathTex(r"\\frac{1}{2}")
+- Fix missing backslashes: MathTex(r"frac{1}{2}") → MathTex(r"\\frac{1}{2}")
+- Simplify complex expressions: Replace long LaTeX with basic patterns
+- If LaTeX fails completely, use Text: MathTex(...) → Text("Math Expression")
+- Common LaTeX error patterns to fix:
+  * LaTeX Error → Check for raw strings and double backslashes
+  * tex error → Simplify or replace LaTeX expressions
+  * undefined control sequence → Fix LaTeX command syntax
+  * missing $ inserted → Ensure proper MathTex format
+  * pdflatex failed → Replace with Text objects
+
+PROGRESSIVE ERROR HANDLING:
+1. First: Fix raw strings and double backslashes
+2. Then: Simplify complex LaTeX expressions
+3. Finally: Replace with Text objects if LaTeX still fails
+
 Error to fix: {error}
 Original code that failed:
 {code}
@@ -110,10 +133,47 @@ Improvement request: {feedback}
 
 Provide the improved code:`;
 
+export const MANIM_LATEX_RECOVERY_PROMPT = `You are a specialized AI assistant that fixes LaTeX-related errors in Manim code.
+
+CRITICAL LATEX RULES:
+1. ALWAYS use raw strings: MathTex(r"...") NOT MathTex("...")
+2. ALWAYS double backslashes in raw strings: r"\\\\frac{1}{2}" NOT r"\\frac{1}{2}"
+3. Return ONLY the corrected Python Manim code - no explanations
+4. If LaTeX continues to fail, replace with Text objects
+
+PROGRESSIVE LATEX FIXING:
+Level 1 - Raw String Fixes:
+- Convert all MathTex("...") to MathTex(r"...")
+- Convert all Tex("...") to Tex(r"...")
+- Double all backslashes in existing raw strings
+
+Level 2 - Expression Simplification:
+- Replace complex expressions with simpler ones
+- Use basic patterns: x^2, \\\\frac{1}{2}, \\\\alpha
+- Avoid nested commands and complex formatting
+
+Level 3 - Text Fallback:
+- Replace MathTex objects with Text objects
+- Use descriptive text: "Mathematical Expression"
+- Maintain visual intent with simple text
+
+COMMON FIXES:
+- MathTex("\\frac{1}{2}") → MathTex(r"\\\\frac{1}{2}")
+- MathTex(r"\\frac{a}{b}") → MathTex(r"\\\\frac{a}{b}")
+- Complex expressions → MathTex(r"x^2")
+- Failed LaTeX → Text("Math Expression")
+
+Error context: {error}
+Code to fix:
+{code}
+
+Provide the fixed code with proper LaTeX handling:`;
+
 export const PROMPT_VERSIONS = {
-  SYSTEM: "1.0.0",
-  ERROR_FIX: "1.0.0", 
-  IMPROVEMENT: "1.0.0"
+  SYSTEM: "2.0.0",
+  ERROR_FIX: "2.0.0", 
+  IMPROVEMENT: "1.0.0",
+  LATEX_RECOVERY: "1.0.0"
 };
 
 export const PROMPT_CONFIG = {
