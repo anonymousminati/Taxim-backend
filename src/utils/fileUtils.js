@@ -1,32 +1,67 @@
-import fs from 'fs';
+import fs from 'fs/promises';
 import path from 'path';
 
-export const ensureDirectoryExists = (dirPath) => {
-    if (!fs.existsSync(dirPath)) {
-        fs.mkdirSync(dirPath, { recursive: true });
+/**
+ * Ensure directory exists using async methods
+ */
+export const ensureDirectoryExists = async (dirPath) => {
+    try {
+        await fs.access(dirPath);
+    } catch {
+        await fs.mkdir(dirPath, { recursive: true });
         console.log(`Created directory: ${dirPath}`);
     }
 };
 
-export const cleanupOldFiles = (directory, maxAgeHours = 24) => {
+/**
+ * Cleanup old files with safety limits and async methods
+ */
+export const cleanupOldFiles = async (directory, maxAgeHours = 24, maxFilesToDelete = 1000) => {
     try {
-        if (!fs.existsSync(directory)) return;
+        // Check if directory exists
+        try {
+            await fs.access(directory);
+        } catch {
+            return { cleaned: 0, skipped: 0, error: 'Directory does not exist' };
+        }
 
-        const files = fs.readdirSync(directory);
+        const files = await fs.readdir(directory);
         const now = Date.now();
         const maxAge = maxAgeHours * 60 * 60 * 1000; // Convert hours to milliseconds
 
-        files.forEach(file => {
-            const filePath = path.join(directory, file);
-            const stats = fs.statSync(filePath);
-            
-            if (now - stats.mtime.getTime() > maxAge) {
-                fs.unlinkSync(filePath);
-                console.log(`Cleaned up old file: ${filePath}`);
+        let cleanedCount = 0;
+        let skippedCount = 0;
+
+        for (const file of files) {
+            // Safety check: don't delete too many files
+            if (cleanedCount >= maxFilesToDelete) {
+                console.warn(`Hit max deletion limit (${maxFilesToDelete}), stopping cleanup`);
+                break;
             }
-        });
+
+            try {
+                const filePath = path.join(directory, file);
+                const stats = await fs.stat(filePath);
+                const fileAge = now - stats.mtime.getTime();
+                const hoursOld = Math.round(fileAge / (1000 * 60 * 60));
+                
+                if (stats.isFile() && fileAge > maxAge) {
+                    await fs.unlink(filePath);
+                    cleanedCount++;
+                    console.log(`Removed ${file} (${hoursOld} hours old)`);
+                } else {
+                    skippedCount++;
+                }
+            } catch (fileError) {
+                console.warn(`Failed to process file ${file}:`, fileError.message);
+                skippedCount++;
+            }
+        }
+
+        return { cleaned: cleanedCount, skipped: skippedCount };
     } catch (error) {
         console.warn('Error during cleanup:', error.message);
+        return { cleaned: 0, skipped: 0, error: error.message };
     }
 };
 

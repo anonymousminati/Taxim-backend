@@ -1,119 +1,47 @@
 import { GoogleGenAI  } from "@google/genai";
+import { v4 as uuidv4 } from 'uuid';
 import fs from "fs";
 import path from "path";
 import { exec } from "child_process";
 import { promisify } from "util";
+import { 
+  MANIM_SYSTEM_PROMPT, 
+  MANIM_ERROR_FIX_PROMPT, 
+  PROMPT_CONFIG 
+} from "../prompts.js";
+import { 
+  handleLatexError, 
+  createLatexFallback, 
+  isLatexError 
+} from "../utils/latexUtils.js";
+import { 
+  findLatestMP4File, 
+  findVideoInMediaDir, 
+  listDirectoryRecursive,
+  generateTempFilename,
+  getTimestamp,
+  safeFileCleanup
+} from "../utils/fileSearch.js";
+import { 
+  checkSystemRequirements,
+  getManimCommands
+} from "../utils/systemUtils.js";
+import {
+  executeWithRetry,
+  createRetryCondition,
+  withTimeout
+} from "../utils/retryUtils.js";
+import {
+  ManimError,
+  createTypedError,
+  ErrorAggregator
+} from "../utils/errorUtils.js";
+import {
+  PerformanceMonitor,
+  OperationTimer
+} from "../utils/monitoringUtils.js";
 
 const execAsync = promisify(exec);
-
-const MANIM_SYSTEM_PROMPT = `You are a specialized AI assistant that generates Python Manim code for mathematical and educational animations.
-
-IMPORTANT RULES:
-1. Always respond with ONLY Python Manim code - no explanations, no markdown formatting
-2. Use proper Manim syntax with the latest version conventions
-3. Create a class that inherits from Scene
-4. Include proper imports at the top: "from manim import *"
-5. The main animation method should be called 'construct'
-6. Generate complete, runnable code that creates engaging visual animations
-7. Focus on mathematical concepts, educational content, or visual demonstrations
-8. Use appropriate Manim objects like Text, Circle, Square, Arrow, etc.
-9. Output should be self-contained and syntactically executable
-10. Add at least one self.wait(1) between key animations
-11. Always assign objects to variables if reused (e.g., circle = Circle())
-
-
-CRITICAL SYNTAX RULES:
-- Use self.play() for animations, self.wait() for pauses
-- Never put self.wait() inside self.play()
-- Always separate animation and wait commands
-- Use proper animation constructors: Create(), Write(), FadeIn(), FadeOut(), Transform()
-- For rotations use: Rotate(object, angle=PI/2, about_point=ORIGIN)
-- For movements use: object.animate.shift(direction)
-- For parameters in self.play(), ONLY use: run_time=1.5 (NO rate_func parameter!)
-- DO NOT use any rate_func parameter - it causes errors
-- Keep animations simple and working
-
-LATEX GUIDELINES:
-- Use MathTex for mathematical expressions: MathTex(r"\\frac{1}{2}")
-- Use Tex for simple LaTeX text: Tex("Hello World")
-- For complex math, use raw strings with double backslashes: r"\\sqrt{x^2 + y^2}"
-- Test with simple expressions first, then build complexity
-- Common LaTeX patterns:
-  - Fractions: r"\\frac{a}{b}"
-  - Squares: r"x^2"
-  - Subscripts: r"x_1"
-  - Greek letters: r"\\alpha, \\beta"
-  - Integrals: r"\\int_0^1 x dx"
-
-FORBIDDEN:
-- rate_func=anything (causes AttributeError)
-- rate_functions.anything (causes AttributeError)
-- Any ease_in, ease_out, smooth functions (not available)
-
-PREFERRED OBJECTS :
-- Circle, Square, Rectangle, Triangle, Polygon, Star, Ellipse
-- Text (for simple text), MathTex (for math), Tex (for LaTeX)
-- NumberPlane, Axes (for coordinate systems)
-- Arrow, Line, Dot, Point
-- Simple geometric shapes and transformations
-
-Example structure:
-from manim import *
-
-class MyAnimation(Scene):
-    def construct(self):
-        circle = Circle()
-        self.play(Create(circle))
-        self.wait(1)
-        self.play(circle.animate.shift(UP), run_time=2)
-        self.wait(1)
-
-Remember: NO rate_func parameter, keep it simple and working!`;
-
-const MANIM_ERROR_FIX_PROMPT = `You are a specialized AI assistant that fixes Python Manim code compilation errors.
-
-IMPORTANT RULES:
-1. Analyze the provided error message and fix the specific issues
-2. Return ONLY the corrected Python Manim code - no explanations, no markdown formatting
-3. Maintain the original intent of the animation while fixing syntax/import/logic errors
-4. Use proper Manim syntax with the latest version conventions
-5. Ensure the code follows proper Python syntax and Manim best practices
-6. Fix common issues like: missing imports, incorrect method names, wrong object properties, syntax errors
-7. If code references undefined objects, define them with defaults
-8. If construct() is missing or has wrong signature, correct it
-
-
-COMMON MANIM FIXES:
-- Use proper imports: from manim import *
-- Scene class must inherit from Scene
-- Animation method must be 'construct(self)'
-- Use correct Manim object names (Circle, Square, Text, MathTex, etc.)
-- Use proper animation methods (Create, Write, Transform, FadeIn, etc.)
-- Ensure proper method chaining with self.play() and self.add()
-
-Error to fix: {error}
-Original code that failed:
-{code}
-
-Provide the fixed code:`;
-
-const MANIM_IMPROVEMENT_PROMPT = `You are a specialized AI assistant that improves Python Manim code based on feedback.
-
-IMPORTANT RULES:
-1. Improve the provided Manim code based on the feedback or error description
-2. Return ONLY the improved Python Manim code - no explanations, no markdown formatting
-3. Make the animation more robust, visually appealing, and error-free
-4. Use proper Manim syntax with the latest version conventions
-5. Add better visual elements, timing, and effects where appropriate
-6. Try adding movement or transformation if animation is too static
-7. Ensure spacing, alignment, or grouping where visual clarity is needed
-
-Original code:
-{code}
-
-Improvement request: {feedback}
-
-Provide the improved code:`;
 
 class ManimAgent {
   constructor() {
@@ -136,6 +64,31 @@ class ManimAgent {
     // Store chat sessions for multi-turn conversations
     this.chatSessions = new Map();
     this.sessionTimeout = 30 * 60 * 1000; // 30 minutes
+    this.maxSessions = PROMPT_CONFIG.MAX_SESSIONS;
+    
+    // Logging state to debounce cleanup logs
+    this.lastCleanupLog = 0;
+    this.cleanupLogInterval = 60000; // Log cleanup at most once per minute
+    
+    // Initialize monitoring and error handling
+    this.performanceMonitor = new PerformanceMonitor({
+      enabled: process.env.NODE_ENV !== 'test',
+      collectInterval: 10000 // 10 seconds
+    });
+    
+    this.errorAggregator = new ErrorAggregator();
+    
+    // Setup retry conditions for different error types
+    this.retryCondition = createRetryCondition([
+      'timeout',
+      'network',
+      'temporary',
+      'rate limit',
+      /latex.*error/i,
+      /rendering.*failed/i
+    ], 3);
+    
+    console.log("ManimAgent initialized with enhanced monitoring and error handling");
   }
   /**
    * Create or get a conversation session for multi-turn interactions
@@ -171,17 +124,37 @@ class ManimAgent {
 
     return this.chatSessions.get(sessionId);
   }
-
   /**
-   * Clean up expired conversation sessions
+   * Clean up expired conversation sessions and enforce size limits
    */
   cleanupExpiredSessions() {
     const now = Date.now();
+    let cleanedCount = 0;
+    
+    // Clean up expired sessions
     for (const [sessionId, session] of this.chatSessions.entries()) {
       if (now - session.lastActivity > this.sessionTimeout) {
         this.chatSessions.delete(sessionId);
-        console.log(`Cleaned up expired session: ${sessionId}`);
+        cleanedCount++;
       }
+    }
+    
+    // Enforce max sessions limit (LRU eviction)
+    if (this.chatSessions.size > this.maxSessions) {
+      const sortedSessions = Array.from(this.chatSessions.entries())
+        .sort((a, b) => a[1].lastActivity - b[1].lastActivity);
+      
+      const sessionsToRemove = sortedSessions.slice(0, this.chatSessions.size - this.maxSessions);
+      for (const [sessionId] of sessionsToRemove) {
+        this.chatSessions.delete(sessionId);
+        cleanedCount++;
+      }
+    }
+    
+    // Debounced logging
+    if (cleanedCount > 0 && (now - this.lastCleanupLog) > this.cleanupLogInterval) {
+      console.log(`Cleaned up ${cleanedCount} sessions (${this.chatSessions.size}/${this.maxSessions} remaining)`);
+      this.lastCleanupLog = now;
     }
   }
 
@@ -233,8 +206,7 @@ class ManimAgent {
         }
         break;
     }
-  }
-  /**
+  }  /**
    * Generate context-aware prompt based on session history
    */
   buildContextualPrompt(userPrompt, sessionId, isRetry = false) {
@@ -242,8 +214,10 @@ class ManimAgent {
     const context = session.context;
 
     // Start with system prompt for session-based requests
-    let contextualPrompt = `${MANIM_SYSTEM_PROMPT}\n\nUser Request: ${userPrompt}`; // Add uniqueness requirement to avoid repetition
-    const uniqueId = Math.random().toString(36).substring(2, 8);
+    let contextualPrompt = `${MANIM_SYSTEM_PROMPT}\n\nUser Request: ${userPrompt}`;
+    
+    // Add uniqueness requirement to avoid repetition using UUID
+    const uniqueId = uuidv4();
     const timestamp = Date.now();
     contextualPrompt += `\n\nIMPORTANT: Create a UNIQUE animation (ID: ${uniqueId}, Time: ${timestamp}) that is completely different from any previous animations. Use different objects, colors, movements, and visual elements.`;
 
@@ -304,17 +278,26 @@ class ManimAgent {
     // Add variety suggestions
     contextualPrompt += `\n\nSuggestions for variety: Try different shapes (Circle, Square, Triangle, Star), colors (RED, BLUE, GREEN, YELLOW, PURPLE), movements (shift, rotate, scale, transform), or mathematical concepts (functions, geometry, algebra).`;
 
+    // Validate prompt length before returning
+    if (contextualPrompt.length > PROMPT_CONFIG.MAX_PROMPT_LENGTH) {
+      console.warn(`Prompt length ${contextualPrompt.length} exceeds limit, truncating context...`);
+      // Truncate conversation history and previous codes to fit within limit
+      const basePrompt = `${MANIM_SYSTEM_PROMPT}\n\nUser Request: ${userPrompt}\n\nIMPORTANT: Create a UNIQUE animation (ID: ${uniqueId}, Time: ${timestamp}).`;
+      if (basePrompt.length > PROMPT_CONFIG.MAX_PROMPT_LENGTH) {
+        throw new Error("Base prompt too long, reduce user request length.");
+      }
+      return basePrompt;
+    }
+
     return contextualPrompt;
   }
-
   async generateManimCode(userPrompt, sessionId = "default") {
+    const timer = new OperationTimer(`generateManimCode-${sessionId}`);
+    
     try {
       // Always use session-based generation for better context and variety
       const session = this.getOrCreateSession(sessionId);
-      const contextualPrompt = this.buildContextualPrompt(
-        userPrompt,
-        sessionId
-      );
+      const contextualPrompt = this.buildContextualPrompt(userPrompt, sessionId);
 
       // Add to conversation history
       this.addSessionContext(sessionId, "conversation", {
@@ -325,13 +308,35 @@ class ManimAgent {
       console.log(`Generating Manim code for session ${sessionId}`);
       console.log(
         "Prompt preview:",
-        contextualPrompt.substring(0, 300) + "..."
+        contextualPrompt.substring(0, PROMPT_CONFIG.CONTEXT_PREVIEW_LENGTH) + "..."
       );
 
-      // Send message to chat session
-      const response = await session.chat.sendMessage(contextualPrompt);
-      const generatedCode = response.text();
+      timer.checkpoint('prompt-prepared');
+
+      // Use enhanced retry logic for AI generation
+      const result = await executeWithRetry(
+        async () => {
+          const response = await withTimeout(
+            session.chat.sendMessage(contextualPrompt),
+            30000, // 30 second timeout
+            'AI generation timed out'
+          );
+          return response.text();
+        },
+        3, // max retries
+        1000, // initial delay
+        2, // backoff multiplier
+        this.retryCondition
+      );
+
+      if (!result.success) {
+        throw createTypedError(result.error, { operation: 'generateManimCode', sessionId });
+      }
+
+      const generatedCode = result.result;
       const extractedCode = this.extractPythonCode(generatedCode);
+
+      timer.checkpoint('code-generated');
 
       // Add to conversation history
       this.addSessionContext(sessionId, "conversation", {
@@ -339,122 +344,181 @@ class ManimAgent {
         content: `Generated Manim code (${extractedCode.length} chars)`,
       });
 
+      // Record performance metrics
+      const timing = timer.end();
+      this.performanceMonitor.addMetric('generation.duration', timing.totalTime);
+      this.performanceMonitor.addMetric('generation.success', 1);
+
       return extractedCode;
     } catch (error) {
-      console.error(
-        "Session-based generation failed, falling back to single-shot:",
-        error.message
-      );      // Fallback to single-shot generation
-      try {
-        // Use models API for single-shot generation
-        const fullPrompt = `${MANIM_SYSTEM_PROMPT}\n\nUser Request: ${userPrompt}`;
-        const result = await this.genai.models.generateContentInternal({
-          model: this.modelConfig.model,
-          generationConfig: this.modelConfig.generationConfig,
-          contents: [{ parts: [{ text: fullPrompt }] }],
-        });
-        const generatedCode = result.text || result.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const timing = timer.end();
+      this.performanceMonitor.addMetric('generation.duration', timing.totalTime);
+      this.performanceMonitor.addMetric('generation.failure', 1);
+      this.errorAggregator.add(error, { operation: 'generateManimCode', sessionId });
 
-        return this.extractPythonCode(generatedCode);
-      } catch (fallbackError) {
-        throw new Error(
-          `Failed to generate Manim code: ${fallbackError.message}`
+      console.error("Session-based generation failed, falling back to single-shot:", error.message);
+
+      // Fallback to single-shot generation with enhanced error handling
+      try {
+        const fallbackResult = await executeWithRetry(
+          async () => {
+            const fullPrompt = `${MANIM_SYSTEM_PROMPT}\n\nUser Request: ${userPrompt}`;
+            const result = await withTimeout(
+              this.genai.models.generateContentInternal({
+                model: this.modelConfig.model,
+                generationConfig: this.modelConfig.generationConfig,
+                contents: [{ parts: [{ text: fullPrompt }] }],
+              }),
+              30000,
+              'Fallback AI generation timed out'
+            );
+            return result.text || result.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          },
+          2, // fewer retries for fallback
+          1000,
+          2,
+          this.retryCondition
         );
+
+        if (!fallbackResult.success) {
+          throw createTypedError(fallbackResult.error, { operation: 'generateManimCode-fallback', sessionId });
+        }
+
+        this.performanceMonitor.addMetric('generation.fallback_success', 1);
+        return this.extractPythonCode(fallbackResult.result);
+      } catch (fallbackError) {
+        this.performanceMonitor.addMetric('generation.fallback_failure', 1);
+        const typedError = createTypedError(fallbackError, { operation: 'generateManimCode-complete-failure', sessionId });
+        this.errorAggregator.add(typedError);
+        throw new ManimError(`Failed to generate Manim code: ${fallbackError.message}`, 'GENERATION_FAILED', { sessionId });
       }
     }
-  }  async fixManimCode(
+  }/**
+   * Try LaTeX-specific fixes first as they're faster and more reliable
+   */
+  async _tryLatexFix(code, errorMessage, sessionId) {
+    console.log('Checking for LaTeX-specific fixes...');
+    const latexFix = await handleLatexError(code, errorMessage);
+    if (!latexFix) return null;
+
+    console.log('Attempting LaTeX fix...');
+    const testResult = await this.testManimCode(latexFix);
+    if (testResult.success) {
+      console.log('LaTeX fix successful!');
+      return {
+        success: true,
+        code: latexFix,
+        attempts: 1,
+        fixType: 'latex',
+        originalError: errorMessage,
+        sessionId: sessionId
+      };
+    }
+    
+    if (testResult.suggestedFix) {
+      console.log('Trying suggested LaTeX fix...');
+      return { suggestedCode: testResult.suggestedFix };
+    }
+    
+    return null;
+  }
+
+  /**
+   * Attempt to fix code using AI models (session-based or single-shot)
+   */
+  async _attemptAIFix(currentCode, lastError, sessionId) {
+    try {
+      // Try session-based fixing first
+      const session = this.getOrCreateSession(sessionId);
+      const contextualFixPrompt =
+        this.buildContextualPrompt(
+          `Fix the following error: ${lastError}`,
+          sessionId,
+          true
+        ) +
+        `\n\nCode to fix:\n${currentCode}\n\nError details: ${lastError}\n\nPlease provide the corrected code only.`;
+
+      const response = await session.chat.sendMessage(contextualFixPrompt);
+      return this.extractPythonCode(response.text());
+    } catch (sessionError) {
+      console.log(
+        "Session-based fixing failed, using single-shot model:",
+        sessionError.message
+      );
+
+      // Fallback to single-shot fixing
+      const fixPrompt = MANIM_ERROR_FIX_PROMPT.replace(
+        "{error}",
+        lastError
+      ).replace("{code}", currentCode);
+
+      const result = await this.genai.models.generateContentInternal({
+        model: this.modelConfig.model,
+        generationConfig: this.modelConfig.generationConfig,
+        contents: [{ parts: [{ text: fixPrompt }] }],
+      });
+      return this.extractPythonCode(result.text || result.candidates?.[0]?.content?.parts?.[0]?.text || "");
+    }
+  }
+
+  /**
+   * Try LaTeX fallback as last resort
+   */
+  async _tryLatexFallback(currentCode, lastError, errorMessage, maxRetries, sessionId) {
+    if (!isLatexError(lastError) && !isLatexError(errorMessage)) {
+      return null;
+    }
+
+    console.log('All fixes failed, trying LaTeX fallback...');
+    const fallbackCode = createLatexFallback(currentCode);
+    const fallbackTest = await this.testManimCode(fallbackCode);
+    
+    if (fallbackTest.success) {
+      console.log('LaTeX fallback successful!');
+      return {
+        success: true,
+        code: fallbackCode,
+        attempts: maxRetries + 1,
+        fixType: 'latex-fallback',
+        originalError: errorMessage,
+        sessionId: sessionId,
+        usedFallback: true
+      };
+    }
+    
+    return null;
+  }
+
+  async fixManimCode(
     code,
     errorMessage,
     sessionId = "default",
     maxRetries = 3
   ) {
-    let attempts = 0;
-    let currentCode = code;
-    let lastError = errorMessage;
-
     // First try LaTeX-specific fixes
-    console.log('Checking for LaTeX-specific fixes...');
-    const latexFix = await this.handleLatexError(code, errorMessage);
-    if (latexFix) {
-      console.log('Attempting LaTeX fix...');
-      const testResult = await this.testManimCode(latexFix);
-      if (testResult.success) {
-        console.log('LaTeX fix successful!');
-        return {
-          success: true,
-          code: latexFix,
-          attempts: 1,
-          fixType: 'latex',
-          originalError: errorMessage,
-          sessionId: sessionId
-        };
-      } else if (testResult.suggestedFix) {
-        // Try the suggested fix from the test
-        currentCode = testResult.suggestedFix;
-        console.log('Trying suggested LaTeX fix...');
-      }
-    }
+    const latexResult = await this._tryLatexFix(code, errorMessage, sessionId);
+    if (latexResult?.success) return latexResult;
+    
+    let currentCode = latexResult?.suggestedCode || code;
+    let lastError = errorMessage;
+    let attempts = 0;
 
     // Add error context to session
-    this.addSessionContext(sessionId, "error", {
-      error: errorMessage,
-      code: code,
-    });
+    this.addSessionContext(sessionId, "error", { error: errorMessage, code: code });
 
+    // Main retry loop
     while (attempts < maxRetries) {
       try {
-        console.log(
-          `Attempting to fix code (attempt ${
-            attempts + 1
-          }/${maxRetries}) for session ${sessionId}`
-        );
+        console.log(`Attempting to fix code (attempt ${attempts + 1}/${maxRetries}) for session ${sessionId}`);
 
-        let fixedCode;
-
-        try {
-          // Try session-based fixing first
-          const session = this.getOrCreateSession(sessionId);
-
-          const contextualFixPrompt =
-            this.buildContextualPrompt(
-              `Fix the following error: ${lastError}`,
-              sessionId,
-              true
-            ) +
-            `\n\nCode to fix:\n${currentCode}\n\nError details: ${lastError}\n\nPlease provide the corrected code only.`;
-
-          const response = await session.chat.sendMessage(contextualFixPrompt);
-          fixedCode = this.extractPythonCode(response.text());
-        } catch (sessionError) {
-          console.log(
-            "Session-based fixing failed, using single-shot model:",
-            sessionError.message
-          );          // Fallback to single-shot fixing
-          const fixPrompt = MANIM_ERROR_FIX_PROMPT.replace(
-            "{error}",
-            lastError
-          ).replace("{code}", currentCode);
-
-          const result = await this.genai.models.generateContentInternal({
-            model: this.modelConfig.model,
-            generationConfig: this.modelConfig.generationConfig,
-            contents: [{ parts: [{ text: fixPrompt }] }],
-          });
-          fixedCode = this.extractPythonCode(result.text || result.candidates?.[0]?.content?.parts?.[0]?.text || "");
-        }
-
-        // Test the fixed code
+        const fixedCode = await this._attemptAIFix(currentCode, lastError, sessionId);
         const testResult = await this.testManimCode(fixedCode);
 
         if (testResult.success) {
           console.log(`Code fixed successfully after ${attempts + 1} attempts`);
-
+          
           // Add successful fix to context
-          this.addSessionContext(sessionId, "code", {
-            code: fixedCode,
-            success: true,
-          });
-
+          this.addSessionContext(sessionId, "code", { code: fixedCode, success: true });
           this.addSessionContext(sessionId, "conversation", {
             type: "assistant",
             content: `Successfully fixed code after ${attempts + 1} attempts`,
@@ -467,55 +531,40 @@ class ManimAgent {
             originalError: errorMessage,
             sessionId: sessionId,
           };
-        } else {
-          currentCode = fixedCode;
-          lastError = testResult.error;
-          attempts++;
+        }
 
-          // Add failed attempt to context
-          this.addSessionContext(sessionId, "code", {
-            code: fixedCode,
-            success: false,
-            error: testResult.error,
-          });
+        // Prepare for next attempt
+        currentCode = fixedCode;
+        lastError = testResult.error;
+        attempts++;
+
+        // Add failed attempt to context
+        this.addSessionContext(sessionId, "code", {
+          code: fixedCode,
+          success: false,
+          error: testResult.error,
+        });
+        
+        // Add retry delay between attempts
+        if (attempts < maxRetries) {
+          console.log(`Waiting 1 second before retry attempt ${attempts + 1}...`);
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
       } catch (error) {
-        console.error(`Error in fix attempt ${attempts + 1}:`, error.message);        attempts++;
+        console.error(`Error in fix attempt ${attempts + 1}:`, error.message);
+        attempts++;
         lastError = error.message;
+        
+        if (attempts < maxRetries) {
+          console.log(`Waiting 1 second before retry attempt ${attempts + 1}...`);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
       }
     }
 
-    // If all fixes failed and it might be a LaTeX issue, try fallback
-    const latexErrorPatterns = [
-      /LaTeX Error/i,
-      /tex error/i,
-      /pdflatex.*failed/i,
-      /latex.*not found/i,
-      /RuntimeError.*latex/i
-    ];
-    
-    const isLatexError = latexErrorPatterns.some(pattern => 
-      pattern.test(lastError) || pattern.test(errorMessage)
-    );
-    
-    if (isLatexError) {
-      console.log('All fixes failed, trying LaTeX fallback...');
-      const fallbackCode = this.createLatexFallback(currentCode);
-      const fallbackTest = await this.testManimCode(fallbackCode);
-      
-      if (fallbackTest.success) {
-        console.log('LaTeX fallback successful!');
-        return {
-          success: true,
-          code: fallbackCode,
-          attempts: maxRetries + 1,
-          fixType: 'latex-fallback',
-          originalError: errorMessage,
-          sessionId: sessionId,
-          usedFallback: true
-        };
-      }
-    }
+    // Try LaTeX fallback as last resort
+    const fallbackResult = await this._tryLatexFallback(currentCode, lastError, errorMessage, maxRetries, sessionId);
+    if (fallbackResult) return fallbackResult;
 
     return {
       success: false,
@@ -525,11 +574,9 @@ class ManimAgent {
       originalError: errorMessage,
       sessionId: sessionId,
     };
-  }
-  async testManimCode(code) {
+  }async testManimCode(code) {
     try {
-      const timestamp = Date.now();
-      const testFilename = `test_animation_${timestamp}.py`;
+      const testFilename = generateTempFilename("test_animation", ".py");
       const testFilePath = await this.savePythonFile(code, testFilename);
 
       // First try Python compilation
@@ -542,11 +589,10 @@ class ManimAgent {
           console.log('Code contains LaTeX elements, testing with Manim dry run...');
           const dryRunCommand = `manim --dry_run "${testFilePath}"`;
           await execAsync(dryRunCommand, { timeout: 30000 });
-          console.log('LaTeX dry run successful');
-        } catch (dryRunError) {
+          console.log('LaTeX dry run successful');        } catch (dryRunError) {
           console.log('Manim dry run failed:', dryRunError.message);
           // Check if it's a LaTeX error
-          const latexFix = await this.handleLatexError(code, dryRunError.message);
+          const latexFix = await handleLatexError(code, dryRunError.message);
           if (latexFix) {
             await this.cleanup(testFilePath);
             return { 
@@ -656,7 +702,6 @@ class ManimAgent {
       );
     }
   }
-
   extractPythonCode(text) {
     // Remove any markdown code blocks if present
     const codeBlockPattern = /```python\n([\s\S]*?)\n```/g;
@@ -666,16 +711,44 @@ class ManimAgent {
       return match[1].trim();
     }
 
-    // If no code blocks, assume the entire response is code
-    // Debug logging to check for uniqueness
-    console.log("Generated code length:", text.trim().length);
-    console.log("Code preview:", text.trim().substring(0, 100) + "...");
-    return text.trim();
-  }
+    // Remove prompt echoes if they exist
+    if (text.includes("User Request:")) {
+      text = text.split("User Request:")[0];
+    }
+    
+    // Remove system prompt echoes
+    if (text.includes("You are a specialized AI assistant")) {
+      const parts = text.split("You are a specialized AI assistant");
+      text = parts[parts.length - 1];
+    }
+    
+    // Remove repeated import statements
+    const lines = text.split('\n');
+    const uniqueLines = [];
+    let hasImport = false;
+    
+    for (const line of lines) {
+      if (line.trim().startsWith('from manim import')) {
+        if (!hasImport) {
+          uniqueLines.push(line);
+          hasImport = true;
+        }
+      } else {
+        uniqueLines.push(line);
+      }
+    }
+    
+    const cleanedText = uniqueLines.join('\n').trim();
 
-  async savePythonFile(code, filename = "animation.py") {
+    // Debug logging to check for uniqueness
+    console.log("Generated code length:", cleanedText.length);
+    console.log("Code preview:", cleanedText.substring(0, 100) + "...");
+    return cleanedText;
+  }
+  async savePythonFile(code, filename = null) {
     const tempDir = process.env.TEMP_DIR || "temp";
-    const filePath = path.join(process.cwd(), tempDir, filename);
+    const actualFilename = filename || generateTempFilename("animation", ".py");
+    const filePath = path.join(process.cwd(), tempDir, actualFilename);
 
     // Ensure temp directory exists
     const fullTempDir = path.dirname(filePath);
@@ -685,179 +758,200 @@ class ManimAgent {
 
     fs.writeFileSync(filePath, code);
     return filePath;
+  }  /**
+   * Extract class name from Python file content
+   */
+  _extractClassName(pythonFilePath) {
+    const fileContent = fs.readFileSync(pythonFilePath, "utf8");
+    console.log("File content preview:", fileContent.substring(0, 200) + "...");
+
+    const classMatch = fileContent.match(/class\s+(\w+)\s*\(/);
+    const className = classMatch ? classMatch[1] : "Animation";
+
+    console.log("Extracted class name:", className);
+    console.log("Class match result:", classMatch);
+
+    if (!classMatch) {
+      console.error("No class found in file! Full content:", fileContent);
+      throw new Error("No valid Manim Scene class found in generated code");
+    }
+
+    return className;
   }
+
+  /**
+   * Execute Manim rendering command with error handling
+   */
+  async _executeManimCommand(pythonFilePath, className, attemptNumber, maxRetries) {
+    const commands = getManimCommands(pythonFilePath, className);
+    let command = commands[attemptNumber] || commands[0];
+    
+    console.log(`Executing Manim command (attempt ${attemptNumber + 1}/${maxRetries}):`, command);
+
+    const { stdout, stderr } = await execAsync(command, {
+      timeout: 180000, // 3 minute timeout
+      cwd: process.cwd(),
+      env: { ...process.env, PYTHONPATH: process.cwd() },
+    });
+
+    console.log("Manim stdout:", stdout);
+    if (stderr) {
+      console.log("Manim stderr:", stderr);
+    }
+
+    // Check for actual errors (Manim often outputs warnings as stderr)
+    const hasErrors = stderr && (
+      stderr.includes("ERROR") ||
+      stderr.includes("Exception") ||
+      stderr.includes("Traceback") ||
+      stderr.includes("failed") ||
+      stderr.includes("could not")
+    );
+
+    if (hasErrors && !stdout.includes("100%")) {
+      throw new Error(`Manim rendering error: ${stderr}`);
+    }
+
+    return { stdout, stderr };
+  }
+
+  /**
+   * Search for generated video file using multiple strategies
+   */
+  async _findGeneratedVideo(pythonFilePath, className) {
+    let foundVideoPath = null;
+    const baseFileName = path.basename(pythonFilePath, ".py");
+    const mediaDir = path.join(process.cwd(), "media");
+
+    // Wait a moment for file system to update
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // Primary search: Look in standard Manim output locations
+    if (fs.existsSync(mediaDir)) {
+      console.log("Searching for video in media directory...");
+      foundVideoPath = findVideoInMediaDir(mediaDir, className, baseFileName);
+    }
+
+    // Secondary search: Look for any recent MP4 file
+    if (!foundVideoPath) {
+      console.log("Searching for latest MP4 file...");
+      foundVideoPath = findLatestMP4File(process.cwd());
+    }
+
+    // Tertiary search: Check current directory for common patterns
+    if (!foundVideoPath) {
+      const timestamp = getTimestamp();
+      const possibleNames = [
+        `${className}.mp4`,
+        `${baseFileName}.mp4`,
+        `${className}_${timestamp}.mp4`,
+        `${baseFileName}_${timestamp}.mp4`,
+      ];
+
+      for (const name of possibleNames) {
+        const possiblePath = path.join(process.cwd(), name);
+        if (fs.existsSync(possiblePath)) {
+          foundVideoPath = possiblePath;
+          console.log(`Found video with pattern search: ${possiblePath}`);
+          break;
+        }
+      }
+    }
+
+    return foundVideoPath || null;
+  }
+
+  /**
+   * Log debugging information when video is not found
+   */
+  _logVideoNotFoundDebug(className, baseFileName) {
+    console.log("=== DEBUGGING: No video found ===");
+    console.log("Working directory:", process.cwd());
+    console.log("Expected class name:", className);
+    console.log("Python file base name:", baseFileName);
+
+    console.log("\nFiles in working directory:");
+    const workingDirFiles = fs.readdirSync(process.cwd());
+    workingDirFiles.forEach((file) => {
+      const filePath = path.join(process.cwd(), file);
+      const stat = fs.statSync(filePath);
+      if (stat.isFile() && file.endsWith(".mp4")) {
+        console.log(`  VIDEO: ${file} (${stat.size} bytes, ${stat.mtime})`);
+      } else if (stat.isFile()) {
+        console.log(`  FILE: ${file} (${stat.size} bytes)`);
+      } else {
+        console.log(`  DIR:  ${file}/`);
+      }
+    });
+
+    const mediaDir = path.join(process.cwd(), "media");
+    if (fs.existsSync(mediaDir)) {
+      console.log("\nMedia directory structure:");
+      listDirectoryRecursive(mediaDir);
+    } else {
+      console.log("\nNo media directory found");
+    }
+
+    console.log("=== END DEBUGGING ===\n");
+  }
+
+  /**
+   * Move/copy video to final output directory
+   */
+  _finalizeVideo(foundVideoPath, className, outputDir) {
+    const timestamp = getTimestamp();
+    const finalVideoName = `${className}_${timestamp}.mp4`;
+    const finalVideoPath = path.join(outputDir, finalVideoName);
+
+    if (foundVideoPath !== finalVideoPath) {
+      fs.copyFileSync(foundVideoPath, finalVideoPath);
+      console.log(`Copied video from ${foundVideoPath} to ${finalVideoPath}`);
+
+      // Clean up the original file
+      try {
+        fs.unlinkSync(foundVideoPath);
+      } catch (cleanupError) {
+        console.warn("Could not clean up original video file:", cleanupError.message);
+      }
+    }
+
+    return { finalVideoName, finalVideoPath };
+  }
+
   async renderAnimation(pythonFilePath, outputDir = null, maxRetries = 2) {
     let attempts = 0;
     let lastError = null;
 
     while (attempts < maxRetries) {
       try {
-        const animationOutputDir =
-          outputDir || process.env.ANIMATION_OUTPUT_DIR || "public/animations";
+        const animationOutputDir = outputDir || process.env.ANIMATION_OUTPUT_DIR || "public/animations";
         const fullOutputDir = path.join(process.cwd(), animationOutputDir);
 
         // Ensure output directory exists
         if (!fs.existsSync(fullOutputDir)) {
           fs.mkdirSync(fullOutputDir, { recursive: true });
-        } // Extract class name from Python file for output filename
-        const fileContent = fs.readFileSync(pythonFilePath, "utf8");
-        console.log(
-          "File content preview:",
-          fileContent.substring(0, 200) + "..."
-        );
+        }
 
-        const classMatch = fileContent.match(/class\s+(\w+)\s*\(/);
-        const className = classMatch ? classMatch[1] : "Animation";
+        // Extract class name from Python file
+        const className = this._extractClassName(pythonFilePath);
 
-        console.log("Extracted class name:", className);
-        console.log("Class match result:", classMatch);
-
-        if (!classMatch) {
-          console.error("No class found in file! Full content:", fileContent);
-          throw new Error("No valid Manim Scene class found in generated code");
-        } // Clean media directory before rendering to avoid confusion
+        // Clean media directory before rendering to avoid confusion
         await this.cleanupMediaFolder();
 
-        // Use a more reliable Manim command with specific output settings
-        const timestamp = Date.now();
+        // Execute Manim command
+        const { stdout, stderr } = await this._executeManimCommand(pythonFilePath, className, attempts, maxRetries);
 
-        // Try different Manim command variations for better compatibility
-        const commands = [
-          `manim -pql "${pythonFilePath}" ${className}`,
-          `manim -p -ql "${pythonFilePath}" ${className}`,
-          `python -m manim -pql "${pythonFilePath}" ${className}`,
-          `manim "${pythonFilePath}" ${className} -pql`,
-        ];
-
-        let command = commands[attempts] || commands[0];
-        console.log(
-          `Executing Manim command (attempt ${attempts + 1}/${maxRetries}):`,
-          command
-        );
-
-        const { stdout, stderr } = await execAsync(command, {
-          timeout: 180000, // 3 minute timeout
-          cwd: process.cwd(),
-          env: { ...process.env, PYTHONPATH: process.cwd() },
-        });
-
-        console.log("Manim stdout:", stdout);
-        if (stderr) {
-          console.log("Manim stderr:", stderr);
-        }
-
-        // Check for actual errors (Manim often outputs warnings as stderr)
-        const hasErrors =
-          stderr &&
-          (stderr.includes("ERROR") ||
-            stderr.includes("Exception") ||
-            stderr.includes("Traceback") ||
-            stderr.includes("failed") ||
-            stderr.includes("could not"));
-
-        if (hasErrors && !stdout.includes("100%")) {
-          throw new Error(`Manim rendering error: ${stderr}`);
-        }
-        // Look for the generated video with improved search strategy
-        let foundVideoPath = null;
-
-        // Wait a moment for file system to update
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-
-        // Primary search: Look in standard Manim output locations
-        const baseFileName = path.basename(pythonFilePath, ".py");
-        const mediaDir = path.join(process.cwd(), "media");
-
-        if (fs.existsSync(mediaDir)) {
-          console.log("Searching for video in media directory...");
-          foundVideoPath = this.findVideoInMediaDir(
-            mediaDir,
-            className,
-            baseFileName
-          );
-        }
-
-        // Secondary search: Look for any recent MP4 file
+        // Search for generated video file
+        const foundVideoPath = await this._findGeneratedVideo(pythonFilePath, className);
+        
         if (!foundVideoPath) {
-          console.log("Searching for latest MP4 file...");
-          foundVideoPath = this.findLatestMP4File(process.cwd());
+          const baseFileName = path.basename(pythonFilePath, ".py");
+          this._logVideoNotFoundDebug(className, baseFileName);
+          throw new Error(`No video file was generated by Manim. Class: ${className}, Base: ${baseFileName}`);
         }
 
-        // Tertiary search: Check current directory for common patterns
-        if (!foundVideoPath) {
-          const possibleNames = [
-            `${className}.mp4`,
-            `${baseFileName}.mp4`,
-            `${className}_${timestamp}.mp4`,
-            `${baseFileName}_${timestamp}.mp4`,
-          ];
-
-          for (const name of possibleNames) {
-            const possiblePath = path.join(process.cwd(), name);
-            if (fs.existsSync(possiblePath)) {
-              foundVideoPath = possiblePath;
-              console.log(`Found video with pattern search: ${possiblePath}`);
-              break;
-            }
-          }
-        }
-
-        if (!foundVideoPath) {
-          // Enhanced debugging output
-          console.log("=== DEBUGGING: No video found ===");
-          console.log("Working directory:", process.cwd());
-          console.log("Expected class name:", className);
-          console.log("Python file base name:", baseFileName);
-
-          console.log("\nFiles in working directory:");
-          const workingDirFiles = fs.readdirSync(process.cwd());
-          workingDirFiles.forEach((file) => {
-            const filePath = path.join(process.cwd(), file);
-            const stat = fs.statSync(filePath);
-            if (stat.isFile() && file.endsWith(".mp4")) {
-              console.log(
-                `  VIDEO: ${file} (${stat.size} bytes, ${stat.mtime})`
-              );
-            } else if (stat.isFile()) {
-              console.log(`  FILE: ${file} (${stat.size} bytes)`);
-            } else {
-              console.log(`  DIR:  ${file}/`);
-            }
-          });
-
-          if (fs.existsSync(mediaDir)) {
-            console.log("\nMedia directory structure:");
-            this.listDirectoryRecursive(mediaDir);
-          } else {
-            console.log("\nNo media directory found");
-          }
-
-          console.log("=== END DEBUGGING ===\n");
-          throw new Error(
-            `No video file was generated by Manim. Class: ${className}, Base: ${baseFileName}`
-          );
-        }
-
-        // Move/copy video to output directory
-        const finalVideoName = `${className}_${timestamp}.mp4`;
-        const finalVideoPath = path.join(fullOutputDir, finalVideoName);
-
-        if (foundVideoPath !== finalVideoPath) {
-          fs.copyFileSync(foundVideoPath, finalVideoPath);
-          console.log(
-            `Copied video from ${foundVideoPath} to ${finalVideoPath}`
-          );
-
-          // Clean up the original file
-          try {
-            fs.unlinkSync(foundVideoPath);
-          } catch (cleanupError) {
-            console.warn(
-              "Could not clean up original video file:",
-              cleanupError.message
-            );
-          }
-        }
+        // Move/copy video to final output directory
+        const { finalVideoName } = this._finalizeVideo(foundVideoPath, className, fullOutputDir);
 
         // Clean up media folder after successful rendering
         await this.cleanupMediaFolder();
@@ -876,16 +970,13 @@ class ManimAgent {
         console.error(`Rendering attempt ${attempts} failed:`, error.message);
 
         if (attempts < maxRetries) {
-          console.log(
-            `Retrying rendering in 2 seconds... (${attempts}/${maxRetries})`
-          );
+          console.log(`Retrying rendering in 2 seconds... (${attempts}/${maxRetries})`);
           await new Promise((resolve) => setTimeout(resolve, 2000));
         }
       }
     }
-    throw new Error(
-      `Failed to render animation after ${maxRetries} attempts: ${lastError.message}`
-    );
+    
+    throw new Error(`Failed to render animation after ${maxRetries} attempts: ${lastError.message}`);
   }
 
   async renderAnimationWithErrorHandling(
@@ -912,11 +1003,8 @@ class ManimAgent {
 
         code = fixResult.code;
         console.log("Code fixed successfully, proceeding with rendering...");
-      }
-
-      // Save the (possibly fixed) code
-      const timestamp = Date.now();
-      const filename = `animation_${timestamp}.py`;
+      }      // Save the (possibly fixed) code
+      const filename = generateTempFilename("animation", ".py");
       const filePath = await this.savePythonFile(code, filename);
       // Attempt to render
       try {
@@ -966,12 +1054,10 @@ class ManimAgent {
 
           if (!improvedCode || improvedCode.trim().length === 0) {
             throw new Error("Empty improved code received");
-          }
-
-          // Try rendering the improved code
+          }          // Try rendering the improved code
           const improvedFilePath = await this.savePythonFile(
             improvedCode,
-            `improved_${filename}`
+            generateTempFilename("improved", ".py")
           );
           const improvedResult = await this.renderAnimation(
             improvedFilePath,
@@ -1139,14 +1225,13 @@ getActiveSessions() {
       console.warn("Failed to cleanup file:", error.message);
     }
   }
-
   async cleanupMediaFolder() {
     try {
       const mediaDir = path.join(process.cwd(), "media");
 
       if (fs.existsSync(mediaDir)) {
-        console.log("Cleaning up media folder...");
-
+        const now = Date.now();
+        
         // Recursively remove media directory and all its contents
         const removeDirectory = (dirPath) => {
           if (fs.existsSync(dirPath)) {
@@ -1168,315 +1253,117 @@ getActiveSessions() {
         };
 
         removeDirectory(mediaDir);
-        console.log("Media folder cleaned up successfully");
+        
+        // Debounced logging for media folder cleanup
+        if ((now - this.lastCleanupLog) > this.cleanupLogInterval) {
+          console.log("Media folder cleaned up successfully");
+          this.lastCleanupLog = now;
+        }
       }
     } catch (error) {
       console.warn("Failed to cleanup media folder:", error.message);
     }
-  }
-
-  async cleanupTempFiles() {
+  }  async cleanupTempFiles() {
     try {
       const tempDir = path.join(process.cwd(), process.env.TEMP_DIR || "temp");
-
+      const now = Date.now();
+      
       if (fs.existsSync(tempDir)) {
-        console.log("Cleaning up temporary files...");
-
-        const files = fs.readdirSync(tempDir);
-        let cleanedCount = 0;
-
-        files.forEach((file) => {
-          try {
-            const filePath = path.join(tempDir, file);
-            const stat = fs.statSync(filePath);
-
-            // Clean up files older than 1 hour
-            const oneHourAgo = Date.now() - 60 * 60 * 1000;
-
-            if (stat.mtime.getTime() < oneHourAgo) {
-              fs.unlinkSync(filePath);
-              cleanedCount++;
-            }
-          } catch (fileError) {
-            console.warn(`Failed to clean up file ${file}:`, fileError.message);
-          }
-        });
-
-        if (cleanedCount > 0) {
-          console.log(`Cleaned up ${cleanedCount} temporary files`);
+        const result = await safeFileCleanup(tempDir, 60 * 60 * 1000); // 1 hour
+        
+        // Debounced logging for temp file cleanup
+        if (result.cleaned > 0 && (now - this.lastCleanupLog) > this.cleanupLogInterval) {
+          console.log(`Cleaned up ${result.cleaned} temporary files from ${tempDir}`);
+          this.lastCleanupLog = now;
         }
       }
     } catch (error) {
       console.warn("Failed to cleanup temporary files:", error.message);
     }
+  }  async checkSystemRequirements() {
+    return await checkSystemRequirements();
   }
 
-  async checkManimInstallation() {
-    try {
-      const { stdout } = await execAsync("manim --version");
-      return {
-        installed: true,
-        version: stdout.trim(),
-      };
-    } catch (error) {
-      return {
-        installed: false,
-        error: error.message,
-      };
-    }
-  }
-
-  async checkFFmpegInstallation() {
-    try {
-      const { stdout } = await execAsync("ffmpeg -version");
-      const versionLine = stdout.split("\n")[0];
-      return {
-        installed: true,
-        version: versionLine.trim(),
-      };
-    } catch (error) {
-      return {
-        installed: false,
-        error: error.message,
-      };
-    }
-  }
-  async checkSystemRequirements() {
-    const manim = await this.checkManimInstallation();
-    const ffmpeg = await this.checkFFmpegInstallation();
-    const latex = await this.checkLatexInstallation();
-
+  /**
+   * Get health and performance status
+   */
+  getHealthStatus() {
+    const health = this.performanceMonitor.getHealthStatus();
+    const errorSummary = this.errorAggregator.getSummary();
+    
     return {
-      manim,
-      ffmpeg,
-      latex,
-      allRequirementsMet: manim.installed && ffmpeg.installed && latex.installed,
+      system: health,
+      errors: errorSummary,
+      sessions: {
+        active: this.chatSessions.size,
+        max: this.maxSessions
+      },
+      performance: {
+        generation: {
+          avgDuration: this.performanceMonitor.getMetricStats('generation.duration')?.avg,
+          successRate: this._calculateSuccessRate('generation')
+        }
+      },
+      timestamp: new Date().toISOString()
     };
   }
 
   /**
-   * Find the most recently created MP4 file in a directory and subdirectories
+   * Get detailed performance metrics
    */
-  findLatestMP4File(searchDir) {
-    let latestFile = null;
-    let latestTime = 0;
-
-    const searchRecursive = (dir) => {
-      try {
-        const items = fs.readdirSync(dir);
-        for (const item of items) {
-          const itemPath = path.join(dir, item);
-          const stat = fs.statSync(itemPath);
-
-          if (stat.isDirectory()) {
-            searchRecursive(itemPath);
-          } else if (item.endsWith(".mp4")) {
-            if (stat.mtime.getTime() > latestTime) {
-              latestTime = stat.mtime.getTime();
-              latestFile = itemPath;
-            }
-          }
-        }
-      } catch (error) {
-        console.warn(`Could not search directory ${dir}:`, error.message);
-      }
+  getPerformanceMetrics(timeRange = 300000) { // 5 minutes default
+    return {
+      generation: {
+        duration: this.performanceMonitor.getMetricStats('generation.duration', timeRange),
+        success: this.performanceMonitor.getMetricStats('generation.success', timeRange),
+        failure: this.performanceMonitor.getMetricStats('generation.failure', timeRange),
+        fallbackSuccess: this.performanceMonitor.getMetricStats('generation.fallback_success', timeRange),
+        fallbackFailure: this.performanceMonitor.getMetricStats('generation.fallback_failure', timeRange)
+      },
+      system: this.performanceMonitor.getHealthStatus(),
+      timeRange
     };
-
-    searchRecursive(searchDir);
-    return latestFile;
   }
 
   /**
-   * Find video file in media directory with various naming patterns
+   * Reset error aggregator (useful for testing or after resolving issues)
    */
-  findVideoInMediaDir(mediaDir, className, baseFileName) {
-    const possiblePaths = [
-      // Standard Manim output structure: media/videos/filename/quality/ClassName.mp4
-      path.join(mediaDir, "videos", baseFileName, "480p15", `${className}.mp4`),
-      path.join(mediaDir, "videos", baseFileName, "720p30", `${className}.mp4`),
-      path.join(
-        mediaDir,
-        "videos",
-        baseFileName,
-        "1080p60",
-        `${className}.mp4`
-      ),
-      path.join(
-        mediaDir,
-        "videos",
-        baseFileName,
-        "low_quality",
-        `${className}.mp4`
-      ),
-      path.join(
-        mediaDir,
-        "videos",
-        baseFileName,
-        "medium_quality",
-        `${className}.mp4`
-      ),
-      path.join(
-        mediaDir,
-        "videos",
-        baseFileName,
-        "high_quality",
-        `${className}.mp4`
-      ),
-      // Alternative patterns
-      path.join(mediaDir, "videos", `${className}.mp4`),
-      path.join(mediaDir, `${className}.mp4`),
-      path.join(mediaDir, `${baseFileName}.mp4`),
-    ];
+  resetErrorTracking() {
+    this.errorAggregator.clear();
+    console.log('Error tracking reset');
+  }
 
-    for (const videoPath of possiblePaths) {
-      if (fs.existsSync(videoPath)) {
-        console.log(`Found video in media directory: ${videoPath}`);
-        return videoPath;
-      }
+  /**
+   * Calculate success rate for an operation
+   */
+  _calculateSuccessRate(operation) {
+    const success = this.performanceMonitor.getMetricStats(`${operation}.success`);
+    const failure = this.performanceMonitor.getMetricStats(`${operation}.failure`);
+    
+    if (!success && !failure) return null;
+    
+    const totalSuccess = success?.count || 0;
+    const totalFailure = failure?.count || 0;
+    const total = totalSuccess + totalFailure;
+    
+    return total > 0 ? (totalSuccess / total) * 100 : null;
+  }
+
+  /**
+   * Cleanup resources when shutting down
+   */
+  shutdown() {
+    if (this.performanceMonitor) {
+      this.performanceMonitor.stop();
     }
-
-    // If standard paths don't work, search recursively
-    return this.findLatestMP4File(mediaDir);
+    this.chatSessions.clear();
+    console.log('ManimAgent shutdown complete');
   }
-
-  /**
-   * List directory contents recursively for debugging
-   */
-  listDirectoryRecursive(dir, prefix = "") {
-    try {
-      const items = fs.readdirSync(dir);
-      items.forEach((item) => {
-        const itemPath = path.join(dir, item);
-        const stat = fs.statSync(itemPath);
-
-        if (stat.isDirectory()) {
-          console.log(`${prefix}📁 ${item}/`);
-          this.listDirectoryRecursive(itemPath, prefix + "  ");
-        } else {
-          console.log(`${prefix}📄 ${item} (${stat.size} bytes)`);
-        }
-      });
-    } catch (error) {
-      console.warn(`Could not list directory ${dir}:`, error.message);
-    }
-  }
-
-  /**
-   * Handle LaTeX-specific errors and provide fixes
-   */
-  async handleLatexError(code, errorMessage) {
-    // Common LaTeX error patterns
-    const latexErrorPatterns = [
-      /LaTeX Error/i,
-      /tex error/i,
-      /missing \$ inserted/i,
-      /undefined control sequence/i,
-      /pdflatex.*failed/i,
-      /latex.*not found/i,
-      /RuntimeError.*latex/i,
-      /failed but did not produce a log file/i
-    ];
-    
-    const isLatexError = latexErrorPatterns.some(pattern => 
-      pattern.test(errorMessage)
-    );
-    
-    if (isLatexError) {
-      console.log('Detected LaTeX error, attempting automatic fixes...');
-      let fixedCode = code;
-      
-      // Fix common LaTeX syntax issues
-      fixedCode = fixedCode.replace(/MathTex\("([^"]*?)"\)/g, (match, content) => {
-        // Ensure proper escaping
-        const escaped = content.replace(/\\/g, '\\\\');
-        return `MathTex(r"${escaped}")`;
-      });
-      
-      // Fix single backslashes in raw strings
-      fixedCode = fixedCode.replace(/MathTex\(r"([^"]*?)"\)/g, (match, content) => {
-        if (!content.includes('\\\\')) {
-          const fixed = content.replace(/\\/g, '\\\\');
-          return `MathTex(r"${fixed}")`;
-        }
-        return match;
-      });
-      
-      // Fix Tex objects similarly
-      fixedCode = fixedCode.replace(/Tex\("([^"]*?)"\)/g, (match, content) => {
-        const escaped = content.replace(/\\/g, '\\\\');
-        return `Tex(r"${escaped}")`;
-      });
-      
-      // Simplify complex LaTeX expressions that might be causing issues
-      fixedCode = fixedCode.replace(/MathTex\(r"([^"]*?)"\)/g, (match, content) => {
-        // Simplify very complex expressions
-        if (content.length > 50) {
-          return `MathTex(r"x^2")`;  // Fallback to simple expression
-        }
-        return match;
-      });
-      
-      console.log('Applied LaTeX fixes to code');
-      return fixedCode;
-    }
-    
-    return null; // Not a LaTeX error
-  }
-
-  /**
-   * Create fallback code when LaTeX completely fails
-   */
-  createLatexFallback(code) {
-    console.log('Creating LaTeX fallback code...');
-    let fallbackCode = code;
-    
-    // Replace MathTex with Text
-    fallbackCode = fallbackCode.replace(
-      /MathTex\([^)]+\)/g, 
-      'Text("Math Expression", font_size=36)'
-    );
-    
-    // Replace Tex with Text
-    fallbackCode = fallbackCode.replace(
-      /Tex\([^)]+\)/g, 
-      'Text("LaTeX Text", font_size=36)'
-    );
-    
-    // Replace NumberPlane with simple grid
-    fallbackCode = fallbackCode.replace(
-      /NumberPlane\([^)]*\)/g,
-      'Rectangle(width=12, height=8).set_stroke(WHITE, 0.5)'
-    );
-    
-    // Replace Axes with simple lines
-    fallbackCode = fallbackCode.replace(
-      /Axes\([^)]*\)/g,
-      'VGroup(Line(LEFT*6, RIGHT*6), Line(DOWN*4, UP*4))'
-    );
-    
-    console.log('Created LaTeX fallback code');
-    return fallbackCode;
-  }
-
-  /**
-   * Check LaTeX installation
-   */
-  async checkLatexInstallation() {
-    try {
-      const { stdout } = await execAsync("pdflatex --version");
-      return {
-        installed: true,
-        version: stdout.split('\n')[0].trim()
-      };
-    } catch (error) {
-      return {
-        installed: false,
-        error: error.message
-      };
-    }
-  }
-
-  // ...existing code...
+  
+  // Utility methods are now in separate modules
+  // - LaTeX handling: latexUtils.js
+  // - File search: fileSearch.js  
+  // - System checks: systemUtils.js
 }
 
 export default ManimAgent;

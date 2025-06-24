@@ -1,8 +1,4 @@
 /**
- * Request validation middleware for Manim API
- */
-
-/**
  * Unified error response helper
  */
 export const respondBadRequest = (res, msg) =>
@@ -14,9 +10,6 @@ export const respondBadRequest = (res, msg) =>
 export const respondServerError = (res, msg) =>
     res.status(500).json({ success: false, error: msg });
 
-/**
- * Validate prompt parameter
- */
 export const validatePrompt = (req, res, next) => {
     const { prompt } = req.body;
 
@@ -51,9 +44,6 @@ export const validatePrompt = (req, res, next) => {
     next();
 };
 
-/**
- * Validate code parameter
- */
 export const validateCode = (req, res, next) => {
     const { code } = req.body;
 
@@ -103,27 +93,42 @@ export const validateSessionId = (req, res, next) => {
     next();
 };
 
-/**
- * Request logging middleware
- */
+    if (code.trim().length === 0) {
+        return res.status(400).json({
+            success: false,
+            error: 'Code cannot be empty'
+        });
+    }
+
+    if (code.length > 50000) {
+        return res.status(400).json({
+            success: false,
+            error: 'Code is too long (maximum 50000 characters)'
+        });
+    }
+
+    // Store cleaned code
+    req.body.code = code.trim();
+    next();
+};
+
 export const logRequest = (req, res, next) => {
     const timestamp = new Date().toISOString();
     const { method, url, ip } = req;
     
     console.log(`[${timestamp}] ${method} ${url} - IP: ${ip}`);
     
-    // Log body size for POST requests
+    // Log request body size for POST requests
     if (method === 'POST' && req.body) {
         const bodySize = JSON.stringify(req.body).length;
-        console.log(`  Body size: ${bodySize} bytes`);
+        console.log(`[${timestamp}] Request body size: ${bodySize} characters`);
     }
     
     next();
 };
 
-/**
- * Async error handler wrapper
- */
-export const asyncHandler = (fn) => (req, res, next) => {
-    Promise.resolve(fn(req, res, next)).catch(next);
+export const asyncHandler = (fn) => {
+    return (req, res, next) => {
+        Promise.resolve(fn(req, res, next)).catch(next);
+    };
 };

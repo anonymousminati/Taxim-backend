@@ -1,10 +1,8 @@
 import express from 'express';
 import { getManimAgent } from '../services/agentManager.js';
 import { logRequest, asyncHandler } from '../middleware/validation.js';
-import { checkSystemRequirements } from '../utils/systemUtils.js';
 import sessionRoutes from './sessions.js';
 import renderRoutes from './render.js';
-import statusRoutes from './status.js';
 
 const router = express.Router();
 
@@ -13,42 +11,16 @@ router.use(logRequest);
 
 // Mount modular route handlers
 router.use('/sessions', sessionRoutes);
-router.use('/status', statusRoutes);
+router.use('/render', renderRoutes);
 
-// Mount render routes at root level (they define their own sub-paths)
-router.use('/', renderRoutes);
-
-// Main status endpoint for frontend compatibility
-router.get('/status', asyncHandler(async (req, res) => {
-    const requirements = await checkSystemRequirements();
-    
-    res.json({
-        success: true,
-        requirements: {
-            manim: requirements.manim,
-            ffmpeg: requirements.ffmpeg,
-            latex: requirements.latex,
-            allRequirementsMet: requirements.allRequirementsMet
-        },
-        environment: {
-            nodeVersion: process.version,
-            platform: process.platform,
-            architecture: process.arch
-        },
-        recommendations: requirements.allRequirementsMet ? [] : [
-            ...(requirements.manim.installed ? [] : ['Install Manim Community Edition']),
-            ...(requirements.ffmpeg.installed ? [] : ['Install FFmpeg']),
-            ...(requirements.latex.installed ? [] : ['Install LaTeX (MiKTeX or TeX Live)'])
-        ],
-        timestamp: new Date().toISOString()
-    });
-}));
+// Legacy generate endpoint (forwards to render routes)
+router.use('/generate', renderRoutes);
 
 // System health and requirements check
 router.get('/health', asyncHandler(async (req, res) => {
     const agent = getManimAgent();
     
-    const requirements = await checkSystemRequirements();
+    const requirements = await agent.checkSystemRequirements();
     const activeSessions = agent.getActiveSessions();
     
     res.json({
@@ -118,7 +90,8 @@ router.post('/test', asyncHandler(async (req, res) => {
 
 // Check system requirements
 router.get('/requirements', asyncHandler(async (req, res) => {
-    const requirements = await checkSystemRequirements();
+    const agent = getManimAgent();
+    const requirements = await agent.checkSystemRequirements();
     
     res.json({
         success: true,
