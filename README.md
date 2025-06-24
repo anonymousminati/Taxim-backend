@@ -1,15 +1,18 @@
 # Taxim Backend API
 
-Backend API server for the Taxim Manim Studio application, providing AI-powered Manim code generation and animation rendering capabilities.
+**Backend API** for the Taxim Manim Studio application, providing AI-powered mathematical animation generation and rendering capabilities.
 
 ## Features
 
-- 🤖 AI-powered Manim code generation using Google Gemini
-- 🎬 Automatic animation rendering with Manim
-- ✅ Code validation and syntax checking
-- 🔒 Security middleware and rate limiting
-- 📁 File management and cleanup
-- 🌐 CORS support for frontend integration
+- 🤖 **AI-powered Code Generation** - Google Gemini integration for intelligent Manim code creation
+- 🎬 **Automatic Animation Rendering** - Seamless Manim video generation with error handling
+- 🔄 **Session Management** - Multi-turn conversations with context awareness
+- ✅ **Code Validation & Testing** - Comprehensive syntax and compilation checking
+- 🛠️ **Error Recovery** - Smart code fixing with LaTeX error handling
+- 🔒 **Security & Rate Limiting** - Production-grade security middleware
+- 📁 **Smart File Management** - Automatic cleanup and optimization
+- � **Monitoring & Health Checks** - Performance metrics and system status
+- 🌐 **CORS & Frontend Integration** - Seamless frontend connectivity
 
 ## Prerequisites
 
@@ -33,8 +36,12 @@ manim --version
 ### Installing FFmpeg (required by Manim)
 
 **Windows:**
-- Download from https://ffmpeg.org/download.html
-- Add to PATH
+```bash
+# Using Chocolatey (recommended)
+choco install ffmpeg
+
+# Or download from https://ffmpeg.org/download.html and add to PATH
+```
 
 **macOS:**
 ```bash
@@ -45,6 +52,24 @@ brew install ffmpeg
 ```bash
 sudo apt update
 sudo apt install ffmpeg
+```
+
+### Installing LaTeX (optional, for mathematical expressions)
+
+**Windows:**
+```bash
+# Install MiKTeX
+choco install miktex
+```
+
+**macOS:**
+```bash
+brew install --cask mactex
+```
+
+**Linux:**
+```bash
+sudo apt install texlive-latex-base texlive-fonts-recommended
 ```
 
 ## Installation
@@ -73,15 +98,16 @@ FRONTEND_URL=http://localhost:3000
 
 ## Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `GEMINI_API_KEY` | Google Gemini API key (required) | - |
-| `PORT` | Server port | 3001 |
-| `FRONTEND_URL` | Frontend URL for CORS | http://localhost:3000 |
-| `ANIMATION_OUTPUT_DIR` | Directory for rendered animations | public/animations |
-| `TEMP_DIR` | Temporary files directory | temp |
-| `RATE_LIMIT_WINDOW_MS` | Rate limit window in ms | 900000 (15 min) |
-| `RATE_LIMIT_MAX_REQUESTS` | Max requests per window | 100 |
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `GEMINI_API_KEY` | Google Gemini API key | - | ✅ Yes |
+| `PORT` | Server port | 3001 | No |
+| `FRONTEND_URL` | Frontend URL for CORS | http://localhost:3000 | No |
+| `ANIMATION_OUTPUT_DIR` | Directory for rendered animations | public/animations | No |
+| `TEMP_DIR` | Temporary files directory | temp | No |
+| `RATE_LIMIT_WINDOW_MS` | Rate limit window in ms | 900000 (15 min) | No |
+| `RATE_LIMIT_MAX_REQUESTS` | Max requests per window | 100 | No |
+| `NODE_ENV` | Environment mode | development | No |
 
 ## Getting Google Gemini API Key
 
@@ -106,63 +132,140 @@ The server will start on `http://localhost:3001` (or your configured PORT).
 
 ## API Endpoints
 
-### Health Check
+### System Health & Status
+
+#### Health Check
 ```http
 GET /health
 ```
+Returns basic API health status.
 
-### Check System Status
+#### System Requirements Check
 ```http
 GET /api/manim/status
 ```
+Returns detailed system status including Manim, FFmpeg, and LaTeX availability.
 
-### Generate Animation from Prompt
+#### Performance Metrics
+```http
+GET /api/manim/status/performance
+```
+Returns performance metrics and monitoring data.
+
+### Animation Generation
+
+#### Generate Animation from Prompt
 ```http
 POST /api/manim/generate
 Content-Type: application/json
 
 {
-  "prompt": "Create a circle that transforms into a square"
+  "prompt": "Create a circle that transforms into a square",
+  "sessionId": "optional-session-id",
+  "userPreferences": {
+    "style": "modern",
+    "colors": ["blue", "red"]
+  }
 }
 ```
 
-### Validate Manim Code
-```http
-POST /api/manim/validate
-Content-Type: application/json
-
-{
-  "code": "from manim import *\n\nclass MyAnimation(Scene):\n    def construct(self):\n        circle = Circle()\n        self.play(Create(circle))"
-}
-```
-
-### Render Custom Manim Code
+#### Render Custom Manim Code
 ```http
 POST /api/manim/render
 Content-Type: application/json
 
 {
-  "code": "from manim import *\n\nclass MyAnimation(Scene):\n    def construct(self):\n        circle = Circle()\n        self.play(Create(circle))"
+  "code": "from manim import *\n\nclass MyAnimation(Scene):\n    def construct(self):\n        circle = Circle()\n        self.play(Create(circle))",
+  "sessionId": "optional-session-id"
 }
+```
+
+#### Improve Existing Code
+```http
+POST /api/manim/improve
+Content-Type: application/json
+
+{
+  "code": "existing manim code",
+  "feedback": "make it more colorful",
+  "sessionId": "optional-session-id"
+}
+```
+
+### Session Management
+
+#### Get Session Information
+```http
+GET /api/manim/sessions/session/{sessionId}
+```
+
+#### Clear Session
+```http
+DELETE /api/manim/sessions/session/{sessionId}
+```
+
+#### List Active Sessions
+```http
+GET /api/manim/sessions/active
 ```
 
 ## Response Format
 
-All API responses follow this format:
-
+### Success Response
 ```json
 {
   "success": true,
-  "data": {},
-  "message": "Operation completed successfully"
+  "code": "generated manim code",
+  "videoPath": "/animations/MyAnimation_1234567890.mp4",
+  "videoFileName": "MyAnimation_1234567890.mp4",
+  "message": "Animation generated successfully",
+  "sessionId": "session-uuid",
+  "sessionInfo": {
+    "exists": true,
+    "codeHistory": 3,
+    "conversationLength": 5
+  },
+  "metadata": {
+    "generationAttempts": 1,
+    "wasCodeFixed": false,
+    "renderAttempts": 1
+  }
 }
 ```
 
-Error responses:
+### Error Response
 ```json
 {
   "success": false,
-  "error": "Error description"
+  "error": "Detailed error description",
+  "timestamp": "2025-06-24T12:00:00.000Z"
+}
+```
+
+### System Status Response
+```json
+{
+  "success": true,
+  "requirements": {
+    "manim": {
+      "installed": true,
+      "version": "Manim Community v0.18.0"
+    },
+    "ffmpeg": {
+      "installed": true,
+      "version": "ffmpeg version 7.1.1"
+    },
+    "latex": {
+      "installed": false,
+      "error": "pdflatex not found"
+    },
+    "allRequirementsMet": false
+  },
+  "environment": {
+    "nodeVersion": "v20.15.1",
+    "platform": "win32"
+  },
+  "recommendations": ["Install LaTeX (MiKTeX or TeX Live)"]
 }
 ```
 
@@ -171,81 +274,263 @@ Error responses:
 ```
 backend/
 ├── src/
-│   ├── routes/
-│   │   └── manim.js          # Manim API routes
-│   └── services/
-│       └── manimAgent.js     # Manim AI agent service
+│   ├── routes/                   # API route handlers
+│   │   ├── manim.js             # Main router with legacy endpoints
+│   │   ├── render.js            # Generation & rendering routes
+│   │   ├── sessions.js          # Session management routes
+│   │   └── status.js            # Health & monitoring routes
+│   ├── services/                # Business logic services
+│   │   ├── manimAgent.js        # Main AI agent with enhanced features
+│   │   ├── agentManager.js      # Singleton agent management
+│   │   └── startup.js           # Server initialization
+│   ├── utils/                   # Utility modules
+│   │   ├── latexUtils.js        # LaTeX error handling & fallbacks
+│   │   ├── fileSearch.js        # File management & cleanup
+│   │   ├── systemUtils.js       # System requirements checking
+│   │   ├── retryUtils.js        # Retry logic & circuit breakers
+│   │   ├── errorUtils.js        # Error classification & aggregation
+│   │   ├── monitoringUtils.js   # Performance monitoring
+│   │   └── fileUtils.js         # File system utilities
+│   ├── middleware/              # Express middleware
+│   │   └── validation.js        # Request validation & logging
+│   └── prompts.js              # AI prompt templates & config
 ├── public/
-│   └── animations/           # Rendered animation files
-├── temp/                     # Temporary Python files
-├── server.js                 # Main server file
-├── package.json
-├── .env.example
-└── README.md
+│   └── animations/             # Rendered animation files (auto-created)
+├── server.js                   # Main Express server
+├── package.json               # Dependencies & scripts
+├── Dockerfile                 # Container configuration
+├── .env.example              # Environment template
+├── .env.production           # Production environment
+└── README.md                 # This file
 ```
 
 ## Security Features
 
-- **Helmet.js** - Security headers
-- **Rate Limiting** - Prevents API abuse
-- **CORS** - Configurable cross-origin requests
-- **Input Validation** - Request payload validation
-- **File Cleanup** - Automatic temporary file removal
+- **🛡️ Helmet.js** - Comprehensive security headers
+- **⏱️ Rate Limiting** - Configurable request throttling to prevent abuse
+- **🌐 CORS** - Secure cross-origin resource sharing
+- **✅ Input Validation** - Robust request payload validation
+- **🧹 Automatic Cleanup** - Secure temporary file removal
+- **🔒 Environment Isolation** - Secure environment variable handling
+- **📝 Request Logging** - Detailed audit trails for security monitoring
+
+## Deployment
+
+### Using Docker (Recommended)
+
+```bash
+# Build the container
+docker build -t taxim-backend .
+
+# Run with environment variables
+docker run -p 3001:3001 \
+  -e GEMINI_API_KEY=your_api_key \
+  -e NODE_ENV=production \
+  taxim-backend
+```
+
+### Using Docker Compose
+
+```bash
+# Start both backend and frontend
+docker-compose up -d
+
+# View logs
+docker-compose logs -f backend
+```
+
+### Manual Deployment
+
+```bash
+# Install dependencies
+npm ci --only=production
+
+# Start in production mode
+NODE_ENV=production npm start
+```
+
+### Environment Configuration
+
+For production deployments, create a `.env.production` file:
+
+```env
+GEMINI_API_KEY=your_production_api_key
+NODE_ENV=production
+PORT=3001
+FRONTEND_URL=https://your-frontend-domain.com
+RATE_LIMIT_WINDOW_MS=900000
+RATE_LIMIT_MAX_REQUESTS=100
+```
 
 ## Troubleshooting
 
-### Common Issues
+### System Requirements Issues
 
 **1. Manim not found:**
 ```bash
 # Verify Manim installation
 manim --version
 
-# If not installed, install it:
+# If not installed:
 pip install manim
+
+# If multiple Python versions:
+python -m pip install manim
 ```
 
 **2. FFmpeg not found:**
-- Ensure FFmpeg is installed and in PATH
-- Try reinstalling FFmpeg
+```bash
+# Verify FFmpeg installation
+ffmpeg -version
 
-**3. Permission errors:**
-- Check write permissions for `temp/` and `public/animations/` directories
-- Run with appropriate permissions
+# Windows (with Chocolatey):
+choco install ffmpeg
 
-**4. API Key errors:**
-- Verify your Gemini API key is correct
-- Check API key permissions and quotas
+# macOS:
+brew install ffmpeg
 
-### Debug Mode
+# Linux:
+sudo apt install ffmpeg
+```
 
-Set environment variable for detailed logs:
+**3. LaTeX errors (optional):**
+```bash
+# Check LaTeX installation
+pdflatex --version
+
+# Install if needed (Windows):
+choco install miktex
+
+# The application includes LaTeX fallbacks for basic math expressions
+```
+
+### API & Runtime Issues
+
+**4. Gemini API errors:**
+- Verify API key is correct and active
+- Check API quotas and rate limits
+- Ensure internet connectivity
+
+**5. Permission errors:**
+```bash
+# Create required directories
+mkdir -p public/animations temp
+
+# Set permissions (Linux/macOS)
+chmod 755 public/animations temp
+```
+
+**6. Memory/Performance issues:**
+- Monitor system resources during rendering
+- Consider reducing animation complexity
+- Implement request queuing for high load
+
+### Development & Debugging
+
+**7. Enable debug logging:**
 ```bash
 NODE_ENV=development npm run dev
 ```
 
+**8. Check system status:**
+```bash
+curl http://localhost:3001/api/manim/status
+```
+
+**9. Monitor performance:**
+```bash
+curl http://localhost:3001/api/manim/status/performance
+```
+
 ## Performance Considerations
 
-- Manim rendering can be CPU-intensive
-- Consider implementing a job queue for production
-- Monitor disk space for animation files
-- Set up log rotation for production deployments
+### Resource Management
+- **CPU Usage**: Manim rendering is CPU-intensive; consider multi-core systems
+- **Memory**: Each session maintains context; monitor memory usage with many concurrent users
+- **Disk Space**: Animations are stored temporarily; automatic cleanup prevents disk overflow
+- **Network**: Large video files may impact bandwidth; consider CDN for production
 
-## Development
+### Scaling Recommendations
+- **Horizontal Scaling**: Deploy multiple instances behind a load balancer
+- **Job Queue**: Implement Redis/Bull queue for render jobs in high-load scenarios
+- **Caching**: Cache generated code and common animations
+- **Storage**: Use cloud storage (AWS S3, Google Cloud) for animation files
+
+### Monitoring
+- Monitor response times via `/api/manim/status/performance`
+- Set up alerts for system resource thresholds
+- Track error rates and API key usage
+- Log rotation for production deployments
+
+## Architecture & Design
+
+### Core Components
+
+**ManimAgent** - Main AI service with:
+- Session management for multi-turn conversations
+- Context-aware prompt building
+- Error recovery and retry logic
+- Performance monitoring
+
+**Route Modules** - Clean separation:
+- `render.js` - Animation generation and rendering
+- `sessions.js` - Session lifecycle management  
+- `status.js` - Health checks and monitoring
+- `manim.js` - Main router with legacy compatibility
+
+**Utility Modules** - Reusable components:
+- `latexUtils.js` - LaTeX error handling and fallbacks
+- `systemUtils.js` - System requirements validation
+- `retryUtils.js` - Configurable retry patterns
+- `errorUtils.js` - Error classification and aggregation
+- `monitoringUtils.js` - Performance metrics collection
+
+### Development Workflow
+
+1. **Setup**: Environment configuration and dependency installation
+2. **Development**: Hot-reload server with debug logging
+3. **Testing**: System requirements and API endpoint validation  
+4. **Production**: Docker containerization with optimized builds
+
+## Contributing
+
+### Development Setup
+
+1. **Fork and clone** the repository
+2. **Install dependencies**: `npm install`
+3. **Copy environment**: `cp .env.example .env`
+4. **Configure API key**: Add your Gemini API key to `.env`
+5. **Start development server**: `npm run dev`
+
+### Code Style
+
+- **ESLint**: Follow the established linting rules
+- **Modular Design**: Keep utilities separate and reusable
+- **Error Handling**: Use typed errors with proper context
+- **Documentation**: Update README for new features
 
 ### Adding New Features
 
-1. Create new route files in `src/routes/`
-2. Add service logic in `src/services/`
-3. Update main server.js to include new routes
-4. Add appropriate tests
-
-### Testing
-
-```bash
-npm test
-```
+1. **Routes**: Create new route files in `src/routes/`
+2. **Services**: Add business logic in `src/services/`
+3. **Utilities**: Reusable code goes in `src/utils/`
+4. **Middleware**: Request handling in `src/middleware/`
 
 ## License
 
 MIT License - see LICENSE file for details.
+
+---
+
+## Quick Start Checklist
+
+- [ ] ✅ **Node.js v18+** installed
+- [ ] 🐍 **Python 3.9+** installed  
+- [ ] 🎬 **Manim** installed (`pip install manim`)
+- [ ] 📹 **FFmpeg** installed and in PATH
+- [ ] 🤖 **Gemini API key** obtained from Google AI Studio
+- [ ] ⚙️ **Environment variables** configured in `.env`
+- [ ] 🚀 **Server started** with `npm run dev`
+- [ ] 🔍 **Health check** at `http://localhost:3001/health`
+
+**Ready to create mathematical animations with AI!** 🎉
