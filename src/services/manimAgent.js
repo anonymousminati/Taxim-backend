@@ -17,6 +17,10 @@ IMPORTANT RULES:
 6. Generate complete, runnable code that creates engaging visual animations
 7. Focus on mathematical concepts, educational content, or visual demonstrations
 8. Use appropriate Manim objects like Text, Circle, Square, Arrow, etc.
+9. Output should be self-contained and syntactically executable
+10. Add at least one self.wait(1) between key animations
+11. Always assign objects to variables if reused (e.g., circle = Circle())
+
 
 CRITICAL SYNTAX RULES:
 - Use self.play() for animations, self.wait() for pauses
@@ -75,6 +79,9 @@ IMPORTANT RULES:
 4. Use proper Manim syntax with the latest version conventions
 5. Ensure the code follows proper Python syntax and Manim best practices
 6. Fix common issues like: missing imports, incorrect method names, wrong object properties, syntax errors
+7. If code references undefined objects, define them with defaults
+8. If construct() is missing or has wrong signature, correct it
+
 
 COMMON MANIM FIXES:
 - Use proper imports: from manim import *
@@ -98,6 +105,8 @@ IMPORTANT RULES:
 3. Make the animation more robust, visually appealing, and error-free
 4. Use proper Manim syntax with the latest version conventions
 5. Add better visual elements, timing, and effects where appropriate
+6. Try adding movement or transformation if animation is too static
+7. Ensure spacing, alignment, or grouping where visual clarity is needed
 
 Original code:
 {code}
