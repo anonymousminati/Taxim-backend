@@ -1,8 +1,176 @@
-# Taxim Backend API
+# Taxim Backend - AI-Powered Ma### Pre-built Docker Image
 
-**Backend API** for the Taxim Manim Studio application, providing AI-powered mathematical animation generation and rendering capabilities.
+The easiest way to run the backend is using the pre-built Docker image from Docker Hub:
 
-## Features
+```bash
+# Pull and run the latest image
+docker pull prathameshmalode/taxim-backend:latest
+
+# Run with environment variables
+docker run -p 3001:3001 \
+  -e GEMINI_API_KEY="your-gemini-api-key" \
+  -e CORS_ORIGIN="http://localhost:3002" \
+  prathameshmalode/taxim-backend:latest
+
+# Run in detached mode with restart policy
+docker run -d --restart unless-stopped \
+  -p 3001:3001 \
+  -e GEMINI_API_KEY="your-gemini-api-key" \
+  -e CORS_ORIGIN="https://yourusername.github.io" \
+  --name taxim-backend \
+  prathameshmalode/taxim-backend:latest
+```
+
+### Building from Source
+
+```bash
+# Clone the repositoryr
+
+A robust Node.js backend service that generates mathematical animations using Manim (Mathematical Animation Engine) through AI-powered natural language processing. The backend integrates with Google Gemini AI to convert user prompts into executable Manim code and renders high-quality mathematical visualizations.
+
+## 🚀 Features
+
+- **AI-Powered Code Generation**: Converts natural language prompts into Manim animation code using Google Gemini AI
+- **Intelligent Error Handling**: Automatically detects and fixes common Manim coding errors with progressive error correction
+- **Session Management**: Maintains conversation context and user preferences across multiple interactions
+- **Real-time Rendering**: Executes Manim code and generates MP4 video animations with optimized rendering pipeline
+- **System Requirements Checking**: Validates Manim, FFmpeg, and LaTeX installations
+- **Automated Cleanup**: Scheduled cleanup of temporary files and old animations
+- **Rate Limiting**: Protects against abuse with configurable request limits
+- **CORS Support**: Properly configured for cross-origin requests from frontend applications
+- **Health Monitoring**: Comprehensive health checks and system status endpoints
+- **Docker Support**: Fully containerized with all dependencies pre-installed
+
+## 🛠 Tech Stack
+
+- **Runtime**: Node.js 20.x with ES modules
+- **Framework**: Express.js with TypeScript-style JSDoc
+- **AI Integration**: Google Gemini AI API (gemini-2.5-flash model)
+- **Animation Engine**: Manim Community Edition v0.18.x
+- **Video Processing**: FFmpeg 4.4.x
+- **LaTeX Support**: MiKTeX for mathematical typesetting
+- **Containerization**: Docker with Ubuntu 22.04 base
+- **Security**: Helmet.js, express-rate-limit, CORS
+- **Monitoring**: Custom health checks and performance monitoring
+
+## 🐳 Docker Deployment
+
+### Pre-built Docker Image
+
+The easiest way to run the backend is using the pre-built Docker image:
+
+```bash
+# Pull and run the latest image
+docker pull prathameshmalode/taxim-backend:latest
+
+# Run with environment variables
+docker run -p 3001:3001 \\
+  -e GEMINI_API_KEY="your-gemini-api-key" \\
+  -e CORS_ORIGIN="http://localhost:3002" \\
+  prathameshmalode/taxim-backend:latest
+```
+
+### Building from Source
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd taxim/backend
+
+# Build the Docker image
+docker build -t taxim-backend .
+
+# Run the container
+docker run -p 3001:3001 \\
+  -e GEMINI_API_KEY="your-gemini-api-key" \\
+  taxim-backend
+```
+
+### Docker Image Details
+
+The Docker image includes:
+- **Ubuntu 22.04** base system
+- **Node.js 20.x** runtime environment
+- **Python 3.11** with Manim Community Edition v0.18.x
+- **FFmpeg 4.4.x** for video processing
+- **MiKTeX** for LaTeX mathematical typesetting
+- **Build tools** and system dependencies
+- **Non-root user** (appuser) for security
+- **Optimized layers** for faster builds and smaller image size
+
+### Please Note- Clone Frontend from [Taxim-Frontend repo](https://github.com/anonymousminati/Taxim-frontend)
+
+
+## 📋 Prerequisites
+
+### For Docker Deployment (Recommended)
+- Docker Desktop or Docker Engine
+- 4GB+ RAM available for container
+- Google Gemini API key
+
+### For Local Development
+- Node.js 20.x or higher
+- Python 3.11+
+- Manim Community Edition v0.18.x
+- FFmpeg 4.4.x or higher
+- LaTeX distribution (MiKTeX or TeX Live)
+- Google Gemini API key
+
+## ⚙️ Environment Variables
+
+Create a `.env` file in the backend directory:
+
+```bash
+# Required
+GEMINI_API_KEY=your-google-gemini-api-key
+
+# Server Configuration
+NODE_ENV=production
+PORT=3001
+
+# CORS Settings
+CORS_ORIGIN=http://localhost:3002
+FRONTEND_URL=http://localhost:3002
+
+# File Management
+ANIMATION_OUTPUT_DIR=public/animations
+TEMP_DIR=temp
+MAX_FILE_SIZE=10485760
+
+# Rate Limiting
+RATE_LIMIT_WINDOW_MS=900000
+RATE_LIMIT_MAX_REQUESTS=100
+```
+
+## 🚀 Getting Started
+
+### Option 1: Docker (Recommended)
+
+```bash
+# Quick start with Docker
+docker run -p 3001:3001 \\
+  -e GEMINI_API_KEY="your-api-key" \\
+  prathameshmalode/taxim-backend:latest
+
+# The server will be available at http://localhost:3001
+```
+
+### Option 2: Local Development
+
+```bash
+# Install dependencies
+npm install
+
+# Set up environment variables
+cp .env.example .env
+# Edit .env with your configuration
+
+# Start the development server
+npm run dev
+
+# Or start production server
+npm start
+```
 
 - 🤖 **AI-powered Code Generation** - Google Gemini integration for intelligent Manim code creation
 - 🎬 **Automatic Animation Rendering** - Seamless Manim video generation with error handling
