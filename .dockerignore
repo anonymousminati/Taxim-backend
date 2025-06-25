@@ -1,0 +1,8 @@
+node_modules
+temp/
+media/
+*.mp4
+*.log
+public/animations/*.mp4
+manum_output/
+.env
