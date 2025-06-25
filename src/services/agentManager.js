@@ -13,8 +13,13 @@ let manimAgentInstance = null;
  */
 export function getManimAgent() {
   if (!manimAgentInstance) {
-    manimAgentInstance = new ManimAgent();
-    console.log('Created shared ManimAgent instance');
+    try {
+      manimAgentInstance = new ManimAgent();
+      console.log('Created shared ManimAgent instance');
+    } catch (error) {
+      console.error('Failed to create ManimAgent:', error.message);
+      throw error; // Re-throw for proper error handling
+    }
   }
   return manimAgentInstance;
 }

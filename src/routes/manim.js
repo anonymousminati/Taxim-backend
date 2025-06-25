@@ -22,23 +22,36 @@ router.use('/', renderRoutes);
 router.get('/status', asyncHandler(async (req, res) => {
     const requirements = await checkSystemRequirements();
     
+    // Check if API key is available for AI features
+    let aiStatus;
+    try {
+        getManimAgent(); // Just test if we can create the agent
+        aiStatus = { available: true, error: null };
+    } catch (error) {
+        aiStatus = { available: false, error: error.message };
+    }
+    
     res.json({
         success: true,
         requirements: {
             manim: requirements.manim,
             ffmpeg: requirements.ffmpeg,
             latex: requirements.latex,
-            allRequirementsMet: requirements.allRequirementsMet
+            ai: aiStatus,
+            allRequirementsMet: requirements.allRequirementsMet && aiStatus.available
         },
         environment: {
             nodeVersion: process.version,
             platform: process.platform,
-            architecture: process.arch
+            architecture: process.arch,
+            tempDir: process.env.TEMP_DIR || 'temp',
+            outputDir: process.env.ANIMATION_OUTPUT_DIR || 'public/animations'
         },
-        recommendations: requirements.allRequirementsMet ? [] : [
+        recommendations: [
             ...(requirements.manim.installed ? [] : ['Install Manim Community Edition']),
             ...(requirements.ffmpeg.installed ? [] : ['Install FFmpeg']),
-            ...(requirements.latex.installed ? [] : ['Install LaTeX (MiKTeX or TeX Live)'])
+            ...(requirements.latex.installed ? [] : ['Install LaTeX (MiKTeX or TeX Live)']),
+            ...(aiStatus.available ? [] : ['Set GEMINI_API_KEY environment variable for AI features'])
         ],
         timestamp: new Date().toISOString()
     });
