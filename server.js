@@ -37,7 +37,7 @@ app.use(limiter);
 
 // CORS configuration
 const corsOptions = {
-    origin: process.env.CORS_ORIGIN || process.env.FRONTEND_URL || '*', // Allow all origins by default
+    origin: '*', // Allow all origins by default
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     credentials: true,
     optionsSuccessStatus: 200
